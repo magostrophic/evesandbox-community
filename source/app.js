@@ -1058,14 +1058,20 @@ export function start(store, cfg) {
   });
 
   // ---------- logo and loading screen ----------
-  // The logo is the file /evesandbox.png in this repo. The CSS shows it; this only waits until it has arrived, so it can fade in.
+  // The logo is tried from this site first, then from the main site, and retried, so a slow or failed request no longer leaves the corner empty.
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const tryImg = (u) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = u; });
   async function loadLogo() {
+    const list = ['/evesandbox.png', SITE + '/evesandbox.png'];
     for (let round = 0; round < 4; round++) {
-      const u = '/evesandbox.png' + (round ? '?r=' + round : '');
-      if (await tryImg(u)) {
-        if (round) document.documentElement.style.setProperty('--logo', 'url("' + u + '")');
+      // Both addresses are tried at the same time; whichever answers first is used.
+      const urls = list.map((base) => (round ? base + '?r=' + round : base));
+      const got = await new Promise((res) => {
+        let left = urls.length;
+        urls.forEach((u) => tryImg(u).then((ok) => { if (ok) res(u); else if (--left === 0) res(null); }));
+      });
+      if (got) {
+        document.documentElement.style.setProperty('--logo', 'url("' + got + '")');
         document.documentElement.classList.add('logo-ok');
         return true;
       }

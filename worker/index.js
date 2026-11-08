@@ -568,7 +568,7 @@ async function profilePage(req, env, url) {
     swap('<meta property="og:description" content="Ask questions, share what you know and help other students.">', '<meta property="og:description" content="' + desc + '">');
     swap('<meta property="og:url" content="https://community.evesandbox.com/">', '<meta property="og:url" content="' + esc(url.origin + '/id/' + row.username) + '">');
     swap('<link rel="canonical" href="https://community.evesandbox.com/">', '<link rel="canonical" href="' + esc(url.origin + '/id/' + row.username) + '">');
-    if (row.avatar) swap('<meta property="og:image" content="https://community.evesandbox.com/evesandbox.png">', '<meta property="og:image" content="' + esc(url.origin + '/img/a/' + row.id + '?v=' + row.avatar) + '">');
+    if (row.avatar) swap('<meta property="og:image" content="https://evesandbox.com/evesandbox.png">', '<meta property="og:image" content="' + esc(url.origin + '/img/a/' + row.id + '?v=' + row.avatar) + '">');
   }
   const h = new Headers(base.headers); h.delete('content-length'); h.delete('etag'); h.set('cache-control', 'no-cache');
   return new Response(req.method === 'HEAD' ? null : html, { status: 200, headers: h });
@@ -602,7 +602,7 @@ async function sharePage(req, env, url) {
   if (!p) return new Response('<!doctype html><meta charset="utf-8"><title>Post not found</title><meta name="robots" content="noindex"><meta http-equiv="refresh" content="3;url=/"><p>Post not found. <a href="/">Back to the community</a></p>', { status: 404, headers: H });
   const origin = url.origin, title = p.title.slice(0, 100);
   const desc = (p.body || 'A post in the Eve Sandbox Community.').replace(/\s+/g, ' ').slice(0, 200);
-  const img = p.img_count > 0 ? origin + '/img/' + p.id + '/0' : origin + '/evesandbox.png';
+  const img = p.img_count > 0 ? origin + '/img/' + p.id + '/0' : 'https://evesandbox.com/evesandbox.png';
   const dest = '/#/post/' + p.id;
   const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + ' - Eve Sandbox Community</title>' +
     '<meta name="robots" content="noindex"><meta name="description" content="' + esc(desc) + '">' +
