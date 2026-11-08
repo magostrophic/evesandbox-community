@@ -1,0 +1,37 @@
+{
+  // The community website and its server. A separate Cloudflare project from the main Eve Sandbox site.
+  "name": "evesandbox-community",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Only these addresses wake the server code. Everything else is plain static files.
+    "run_worker_first": ["/api/*", "/img/*", "/p/*", "/id/*"]
+  },
+  "vars": {
+    // STEP 1 of the guide: paste the three values Firebase shows you (none of them is a secret).
+    "FIREBASE_PROJECT_ID": "eve-sandbox-community",
+    "FIREBASE_API_KEY": "AIzaSyBISGLiA2_W0tAjjlr7va5hrh4Zugl3bfM",
+    "FIREBASE_APP_ID": "1:893466401458:web:45647b8bcabd39897407ab"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "evesandbox-community",
+      // STEP 2 of the guide: paste your D1 database's ID between the quotes.
+      "database_id": "eecd0c1c-2edd-4834-9daa-49b325b2393f"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "evesandbox-community-images"
+    }
+  ],
+  // Puts the site at community.evesandbox.com (the domain must already be on your Cloudflare account).
+  "routes": [
+    { "pattern": "community.evesandbox.com", "custom_domain": true }
+  ]
+}
