@@ -24,7 +24,8 @@ export function createStore(fbConfig) {
     if (!r.ok) {
       const code = (j && j.error) || (r.status >= 500 ? 'server' : 'bad-request');
       if (code === 'sign-in' && user) { user = null; tell(); }
-      throw err(code);
+      const e = err(code); e.status = r.status; e.path = path; if (j && j.ref) e.ref = j.ref;
+      throw e;
     }
     return j;
   }
@@ -154,7 +155,8 @@ export function createStore(fbConfig) {
       catch (e) { if (e.code === 'not-found' || e.code === 'bad-request') return null; throw e; }
     },
     async getMyVotes(uid, ids) { return (await call('GET', '/api/votes?ids=' + ids.join(','))).votes || {}; },
-    async vote(uid, id, v) { await call('PUT', '/api/posts/' + id + '/vote', { value: v }); },
+    async vote(uid, id, v) { const r = await call('PUT', '/api/posts/' + id + '/vote', { value: v }); return r && typeof r.score === 'number' ? r.score : null; },
+    async getScores(ids, since) { return call('GET', '/api/scores?ids=' + ids.join(',') + (since === null || since === undefined ? '' : '&since=' + since)); },
     async createPost(uid, name, title, body, files) {
       const f = new FormData();
       f.append('title', title); f.append('body', body);

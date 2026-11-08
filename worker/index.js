@@ -550,39 +550,70 @@ async function profileApi(req, env, url, uname, what) {
   return json({ posts: r.page.map(postOut), cursor: r.cursor, done: r.done });
 }
 
+// The app's own page (index.html), fetched without the browser's "has it changed?" headers so the answer is always a full page.
+async function appPage(req, env, url) {
+  const hd = new Headers(req.headers);
+  ['if-none-match', 'if-modified-since', 'range', 'if-range'].forEach((k) => hd.delete(k));
+  return env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET', headers: hd }));
+}
+const descOf = (t, fallback) => ((t || '').replace(/\s+/g, ' ').trim() || fallback).slice(0, 200);
+// Puts a page's own title, text and picture into the preview card that chat apps and search show.
+function withCard(html, c) {
+  const swap = (a, b) => { html = html.replace(a, () => b); };
+  const title = esc(c.title), desc = esc(c.desc), url = esc(c.url), img = esc(c.image);
+  swap('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="robots" content="noindex">');
+  swap('<meta name="twitter:card" content="summary">\n', '');
+  swap('<title>Eve Sandbox - Community</title>', '<title>' + title + '</title>');
+  swap('<meta property="og:type" content="website">', '<meta property="og:type" content="' + (c.type || 'website') + '">');
+  swap('<meta property="og:title" content="Eve Sandbox - Community">', '<meta property="og:title" content="' + title + '">');
+  swap('<meta property="og:description" content="Ask questions, share what you know and help other students.">', '<meta property="og:description" content="' + desc + '">');
+  swap('<meta name="description" content="The Eve Sandbox community: ask questions, share what you know and help other students.">', '<meta name="description" content="' + desc + '">');
+  swap('<meta property="og:url" content="https://community.evesandbox.com/">', '<meta property="og:url" content="' + url + '">');
+  swap('<link rel="canonical" href="https://community.evesandbox.com/">', '<link rel="canonical" href="' + url + '">');
+  swap('<meta property="og:image" content="https://evesandbox.com/evesandbox.png">',
+    '<meta property="og:image" content="' + img + '"><meta property="og:image:alt" content="' + esc(c.imageAlt || c.title) + '">' +
+    '<meta name="twitter:card" content="' + (c.big ? 'summary_large_image' : 'summary') + '"><meta name="twitter:title" content="' + title + '">' +
+    '<meta name="twitter:description" content="' + desc + '"><meta name="twitter:image" content="' + img + '">');
+  return html;
+}
+function pageResponse(req, base, html, status) {
+  const h = new Headers(base.headers); h.delete('content-length'); h.delete('etag'); h.delete('last-modified'); h.set('cache-control', 'no-cache');
+  return new Response(req.method === 'HEAD' ? null : html, { status: status || 200, headers: h });
+}
+
 // /id/<username>: the same page for everyone, with the right title and preview card for chat apps.
 async function profilePage(req, env, url) {
   const m = url.pathname.match(/^\/id\/([A-Za-z0-9_]{1,40})\/?$/);
   if (!m) return env.ASSETS.fetch(req);
-  const base = await env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET', headers: req.headers }));
+  const base = await appPage(req, env, url);
   if (!base.ok) return base;
   const row = await env.DB.prepare('SELECT id, username, name, bio, avatar FROM users WHERE username = ?').bind(m[1].toLowerCase()).first();
   let html = await base.text();
-  const swap = (a, b) => { html = html.replace(a, () => b); };
-  swap('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="robots" content="noindex">');
   if (row) {
-    const title = esc('Eve Sandbox - ' + (row.name || 'Member') + ' (@' + row.username + ')');
-    const desc = esc((row.bio || 'A member of the Eve Sandbox Community.').replace(/\s+/g, ' ').slice(0, 200));
-    swap('<title>Eve Sandbox - Community</title>', '<title>' + title + '</title>');
-    swap('<meta property="og:title" content="Eve Sandbox - Community">', '<meta property="og:title" content="' + title + '">');
-    swap('<meta property="og:description" content="Ask questions, share what you know and help other students.">', '<meta property="og:description" content="' + desc + '">');
-    swap('<meta property="og:url" content="https://community.evesandbox.com/">', '<meta property="og:url" content="' + esc(url.origin + '/id/' + row.username) + '">');
-    swap('<link rel="canonical" href="https://community.evesandbox.com/">', '<link rel="canonical" href="' + esc(url.origin + '/id/' + row.username) + '">');
-    if (row.avatar) swap('<meta property="og:image" content="https://evesandbox.com/evesandbox.png">', '<meta property="og:image" content="' + esc(url.origin + '/img/a/' + row.id + '?v=' + row.avatar) + '">');
-  }
-  const h = new Headers(base.headers); h.delete('content-length'); h.delete('etag'); h.set('cache-control', 'no-cache');
-  return new Response(req.method === 'HEAD' ? null : html, { status: 200, headers: h });
+    html = withCard(html, {
+      title: 'Eve Sandbox - ' + (row.name || 'Member') + ' (@' + row.username + ')',
+      desc: descOf(row.bio, 'A member of the Eve Sandbox Community.'),
+      url: url.origin + '/id/' + row.username,
+      image: row.avatar ? url.origin + '/img/a/' + row.id + '?v=' + row.avatar : 'https://evesandbox.com/evesandbox.png',
+      imageAlt: (row.name || 'Member') + "'s profile picture", big: false
+    });
+  } else html = withCard(html, { title: 'Eve Sandbox - Community', desc: 'Ask questions, share what you know and help other students.', url: url.origin + '/', image: 'https://evesandbox.com/evesandbox.png' });
+  return pageResponse(req, base, html);
 }
 
 // ---------- pictures ----------
 async function image(req, env, url) {
   const m = url.pathname.match(/^\/img\/([a-z0-9]{8})\/([0-3])$/), av = url.pathname.match(/^\/img\/a\/([a-z0-9]{12})$/);
   if ((!m && !av) || (req.method !== 'GET' && req.method !== 'HEAD')) return new Response('Not found', { status: 404, headers: BASE_H });
+  // A picture is only for showing inside the community's pages. Opening its address as a page (new tab, "Open image in new tab") is refused.
+  const dest = (req.headers.get('sec-fetch-dest') || '').toLowerCase();
+  if (dest === 'document' || dest === 'iframe' || dest === 'frame' || dest === 'embed' || dest === 'object') return new Response(null, { status: 302, headers: { location: '/', 'cache-control': 'no-store' } });
   const o = await env.IMAGES.get(av ? 'a/' + av[1] : m[1] + '/' + m[2]);
   if (!o) return new Response('Not found', { status: 404, headers: BASE_H });
   const h = {
     'content-type': o.httpMetadata && o.httpMetadata.contentType || 'application/octet-stream',
     'cache-control': 'public, max-age=31536000, immutable',
+    vary: 'Sec-Fetch-Dest',
     etag: o.httpEtag,
     'x-content-type-options': 'nosniff',
     'content-security-policy': "default-src 'none'; sandbox",
@@ -593,24 +624,25 @@ async function image(req, env, url) {
   return new Response(req.method === 'HEAD' ? null : o.body, { headers: h });
 }
 
-// ---------- share link: /p/<id> gives chat apps a preview card, then sends people to the post ----------
+// ---------- /p/<id>: the post itself. People get the app, chat apps get a preview card with the post's title, text and first picture ----------
 async function sharePage(req, env, url) {
   const m = url.pathname.match(/^\/p\/([a-z0-9]{8})\/?$/);
-  const H = { 'content-type': 'text/html; charset=utf-8', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; img-src https:", 'referrer-policy': 'no-referrer' };
-  if (!m) return new Response('Not found', { status: 404, headers: BASE_H });
-  const p = await env.DB.prepare('SELECT id, title, body, img_count FROM posts WHERE id = ?').bind(m[1]).first();
-  if (!p) return new Response('<!doctype html><meta charset="utf-8"><title>Post not found</title><meta name="robots" content="noindex"><meta http-equiv="refresh" content="3;url=/"><p>Post not found. <a href="/">Back to the community</a></p>', { status: 404, headers: H });
-  const origin = url.origin, title = p.title.slice(0, 100);
-  const desc = (p.body || 'A post in the Eve Sandbox Community.').replace(/\s+/g, ' ').slice(0, 200);
-  const img = p.img_count > 0 ? origin + '/img/' + p.id + '/0' : 'https://evesandbox.com/evesandbox.png';
-  const dest = '/#/post/' + p.id;
-  const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + ' - Eve Sandbox Community</title>' +
-    '<meta name="robots" content="noindex"><meta name="description" content="' + esc(desc) + '">' +
-    '<meta property="og:site_name" content="Eve Sandbox"><meta property="og:type" content="article"><meta property="og:title" content="' + esc(title) + '">' +
-    '<meta property="og:description" content="' + esc(desc) + '"><meta property="og:url" content="' + esc(origin + '/p/' + p.id) + '"><meta property="og:image" content="' + esc(img) + '">' +
-    '<meta name="twitter:card" content="' + (p.img_count > 0 ? 'summary_large_image' : 'summary') + '">' +
-    '<meta http-equiv="refresh" content="0;url=' + dest + '"></head><body><p><a href="' + dest + '">Open the post</a></p></body></html>';
-  return new Response(req.method === 'HEAD' ? null : html, { headers: { ...H, 'cache-control': 'public, max-age=60' } });
+  const base = await appPage(req, env, url);
+  if (!base.ok) return base;
+  if (!m) return pageResponse(req, base, await base.text(), 404);   // not a post address: the app shows "not found"
+  const p = await env.DB.prepare('SELECT p.id, p.title, p.body, p.img_count, p.created, u.name AS aname FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE p.id = ?').bind(m[1]).first();
+  let html = await base.text();
+  if (!p) return pageResponse(req, base, withCard(html, { title: 'Post not found - Eve Sandbox Community', desc: 'This post does not exist or was deleted.', url: url.origin + '/', image: 'https://evesandbox.com/evesandbox.png' }), 404);
+  const origin = url.origin;
+  const has = p.img_count > 0;
+  html = withCard(html, {
+    title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
+    desc: descOf(p.body, 'A post by ' + (p.aname || 'a member') + ' in the Eve Sandbox Community.'),
+    url: origin + '/p/' + p.id,
+    image: has ? origin + '/img/' + p.id + '/0' : 'https://evesandbox.com/evesandbox.png',
+    imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has
+  });
+  return pageResponse(req, base, html);
 }
 
 export default {
@@ -624,8 +656,9 @@ export default {
       return env.ASSETS ? await env.ASSETS.fetch(req) : new Response('Not found', { status: 404 });
     } catch (e) {
       if (e instanceof HttpErr) return json({ error: e.code }, e.status);
-      console.error(e);
-      return json({ error: 'server' }, 500);
+      const ref = newId(6);
+      console.error('ref ' + ref, e && e.stack ? e.stack : e);
+      return json({ error: 'server', ref }, 500);
     }
   }
 };

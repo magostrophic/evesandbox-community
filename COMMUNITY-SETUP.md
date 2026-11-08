@@ -199,7 +199,8 @@ On Cloudflare's free plans (limits as I know them; check Cloudflare's pricing pa
 | What you see | What to do |
 |---|---|
 | "The community is not open yet" | The three `FIREBASE_` values in `wrangler.jsonc` are empty. Fill them in on GitHub; it redeploys. |
-| "still being set up" when signing in or posting | The `SESSION_SECRET` secret is missing or shorter than 32 characters (step 7). |
+| "Something went wrong. Please try again." on a post or profile page | A grey line under the message shows what failed (for example `server | HTTP 500 | /api/users/name | ref ab12cd`). Send that line to the site owner. With a `ref`, open Cloudflare, Workers & Pages, evesandbox-community, **Logs**, and search for the same `ref` to see the exact error. |
+| "The community is still being set up" when signing in or posting | The server cannot find `SESSION_SECRET`. In Cloudflare open **Workers & Pages**, the **evesandbox-community** project, **Settings**, **Variables and Secrets**. There must be a row named exactly `SESSION_SECRET` (capital letters, no spaces) with the type **Secret** (not *Text*, because a Text variable is wiped at the next GitHub deploy) and a value of **32 or more** characters with no spaces. Add or fix it, press **Deploy**, wait a minute, hard-refresh and try again. |
 | The Google window does not open | The browser blocked the pop-up. Allow pop-ups for community.evesandbox.com and press the button again. If nothing changes, delete the `Content-Security-Policy` line from `public/_headers` on GitHub and tell me. |
 | "This address is not allowed for sign-in yet" | Add `community.evesandbox.com` under Authentication, then Settings, then Authorized domains (step 1.5). |
 | "Sign-in could not be checked" | One of the three Firebase values in `wrangler.jsonc` is wrong (most often `FIREBASE_PROJECT_ID`; it must be the project's ID, not its display name), or your computer's clock is wrong. |

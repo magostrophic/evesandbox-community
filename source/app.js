@@ -141,6 +141,17 @@ const MSG = {
   'email-login-off': 'Email sign-in is not switched on yet. The site owner must enable it in Firebase (Authentication, Sign-in method, Email/Password).'
 };
 const errText = (e) => MSG[e && e.code] || 'Something went wrong. Please try again.';
+// A short technical line under the message, so a problem can be told to the site owner exactly.
+const errInfo = (e) => {
+  if (!e) return '';
+  const bits = [];
+  if (e.code) bits.push(e.code);
+  if (e.status) bits.push('HTTP ' + e.status);
+  if (e.path) bits.push(String(e.path).split('?')[0]);
+  if (e.ref) bits.push('ref ' + e.ref);
+  if (!e.code && e.message) bits.push(String(e.message).slice(0, 80));
+  return bits.join(' | ');
+};
 
 export function start(store, cfg) {
   const root = $('#app');
@@ -580,7 +591,7 @@ export function start(store, cfg) {
           try {
             const id = await store.createPost(me.uid, me.name, title, body, files.slice());
             lastPost = Date.now(); feed.posts = []; feed.cursor = null; feed.done = false; clearFiles();
-            toast('Posted'); go('/#/post/' + id);
+            toast('Posted'); go('/p/' + id);
           } catch (e) { postBtn.disabled = false; err.hidden = false; err.textContent = errText(e); }
         });
         setTimeout(() => { postBtn.disabled = false; }, 4000);
@@ -593,7 +604,7 @@ export function start(store, cfg) {
 
   // ---------- views ----------
   function postCard(p) {
-    const a = h('a', { class: 'pbody', href: '/#/post/' + p.id },
+    const a = h('a', { class: 'pbody', href: '/p/' + p.id },
       h('h2', { class: 'pt', text: p.title }),
       p.body ? h('p', { class: 'ps', text: p.body.slice(0, 220) }) : null,
       p.images && p.images.length ? h('div', { class: 'pimgs' }, h('img', { src: p.images[0], alt: '', loading: 'lazy' }), p.images.length > 1 ? h('span', { class: 'more-n', text: '+' + (p.images.length - 1) }) : null) : null,
@@ -606,7 +617,7 @@ export function start(store, cfg) {
     const my = ++seq;
     const goId = h('input', { type: 'text', placeholder: 'Post ID', maxlength: '12', 'aria-label': 'Go to post ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
     const goBtn = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Go' }, icon('search', 16, 2.4));
-    const jump = () => { let v = goId.value.trim().toLowerCase(); const m = v.match(/post\/([a-z0-9]+)/); v = m ? m[1] : v.replace(/^#/, ''); if (!v) return; go('/#/post/' + encodeURIComponent(v)); };
+    const jump = () => { let v = goId.value.trim().toLowerCase(); const m = v.match(/post\/([a-z0-9]+)/); v = m ? m[1] : v.replace(/^#/, ''); if (!v) return; go('/p/' + encodeURIComponent(v)); };
     goBtn.onclick = jump; goId.onkeydown = (e) => { if (e.key === 'Enter') jump(); };
     const tab = (s, l) => h('a', { class: 'tab' + (feed.sort === s ? ' on' : ''), href: s === 'top' ? '/#/top' : '/', text: l });
     const list = h('div', { class: 'plist' });
@@ -830,7 +841,7 @@ export function start(store, cfg) {
         head.replaceChildren(voteCol(p, drawHead), h('div', { class: 'pmain' },
           h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), idc),
           h('h1', { class: 'ptitle', text: p.title }), p.body ? h('p', { class: 'pb' }, rich(p.body)) : null,
-          p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('a', { href: u, target: '_blank', rel: 'noopener', onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return; ev.preventDefault(); openViewer(p.images, i); } }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy' })))) : null,
+          p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('div', { class: 'gi', role: 'button', tabindex: '0', 'aria-label': 'View picture ' + (i + 1) + ' of ' + p.images.length, onclick: (ev) => { ev.preventDefault(); openViewer(p.images, i); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openViewer(p.images, i); } } }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy', draggable: 'false' })))) : null,
           h('div', { class: 'acts' }, h('span', { class: 'rc', 'data-pid': p.id, 'data-long': '1' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
       };
       const drawReplies = () => {
@@ -873,7 +884,7 @@ export function start(store, cfg) {
       loadReplies();
       hooks.replies = () => { if (rLoading) return; replies.length = 0; rCursor = null; rDone = false; loadReplies(); };
       hooks.redraw = () => { drawHead(); drawReplies(); const t = $('.comp textarea'); if (t) t.placeholder = me ? 'Write a reply...' : 'Sign in to reply'; };
-    }).catch((e) => { if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    }).catch((e) => { console.error('page error', e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: errInfo(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
     return view;
   }
   const backLink = () => h('a', { class: 'back', href: '/' }, icon('back', 16, 2.4), ' All posts');
@@ -969,7 +980,7 @@ export function start(store, cfg) {
   const EMPTY = { posts: 'No posts yet.', replies: 'No replies yet.', liked: 'No liked posts yet.' };
   function profReply(r) {
     return h('div', { class: 'reply' },
-      h('div', { class: 'meta' }, h('span', { text: 'Replied to' }), h('a', { class: 'unl', href: '/#/post/' + r.postId, text: r.postTitle || 'a post' }), h('span', { text: '·' }), h('span', { text: ago(r.createdAt), title: full(r.createdAt) })),
+      h('div', { class: 'meta' }, h('span', { text: 'Replied to' }), h('a', { class: 'unl', href: '/p/' + r.postId, text: r.postTitle || 'a post' }), h('span', { text: '·' }), h('span', { text: ago(r.createdAt), title: full(r.createdAt) })),
       h('p', { class: 'rb' }, rich(r.body)));
   }
   function profileView(uname, tab) {
@@ -1020,7 +1031,7 @@ export function start(store, cfg) {
       hooks.redraw = () => { drawHead(); if (tab === 'liked') { items = []; cursor = null; done = false; hidden = false; loadMore(); } else drawList(); };
       drawHead(); holder.replaceChildren(head, h('div', { class: 'bar' }, tabs), list, stat, h('div', { class: 'center' }, more));
       loadMore();
-    }).catch((e) => { if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    }).catch((e) => { console.error('page error', e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: errInfo(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
     return view;
   }
 
@@ -1028,6 +1039,8 @@ export function start(store, cfg) {
   function route() {
     const pm = location.pathname.match(/^\/id\/([^/]+)\/?$/);
     if (pm) { let u = pm[1]; try { u = decodeURIComponent(u); } catch (e) { /* keep as typed */ } const t = new URLSearchParams(location.search).get('tab'); return { name: 'profile', user: u.toLowerCase(), tab: t === 'replies' || t === 'liked' ? t : 'posts' }; }
+    const pp = location.pathname.match(/^\/p\/([^/]+)\/?$/);
+    if (pp) { let id = pp[1]; try { id = decodeURIComponent(id); } catch (e) { /* keep as typed */ } return { name: 'post', id: id.toLowerCase() }; }
     const hsh = location.hash || '#/';
     const m = hsh.match(/^#\/post\/([^/?]+)/);
     if (m) { let id = m[1]; try { id = decodeURIComponent(id); } catch (e) { /* keep as typed */ } return { name: 'post', id: id.toLowerCase() }; }
@@ -1035,6 +1048,7 @@ export function start(store, cfg) {
   }
   function render() {
     const r = route();
+    if (r.name === 'post' && location.hash.indexOf('#/post/') === 0) history.replaceState(null, '', '/p/' + encodeURIComponent(r.id));   // old-style link: show the shareable address
     renderHeader();
     hooks.redraw = null; hooks.pill = null; hooks.replies = null; current = null;
     document.title = 'Eve Sandbox - Community';
@@ -1053,9 +1067,13 @@ export function start(store, cfg) {
     const a = ev.target.closest && ev.target.closest('a[href]');
     if (!a || a.target || a.hasAttribute('download')) return;
     let u; try { u = new URL(a.href, location.href); } catch (e) { return; }
-    if (u.origin !== location.origin || !(u.pathname === '/' || u.pathname.indexOf('/id/') === 0)) return;
+    if (u.origin !== location.origin || !(u.pathname === '/' || u.pathname.indexOf('/id/') === 0 || u.pathname.indexOf('/p/') === 0)) return;
     ev.preventDefault(); go(u.pathname + u.search + u.hash);
   });
+
+  // Pictures are shown inside the page only: no right-click menu ("Open image in new tab", "Save image") and no dragging them out.
+  document.addEventListener('contextmenu', (ev) => { const t = ev.target; if (t && t.closest && t.closest('img, .gi, .gal, .pimgs, .viewer, .avrow, .av')) ev.preventDefault(); });
+  document.addEventListener('dragstart', (ev) => { if (ev.target && ev.target.tagName === 'IMG') ev.preventDefault(); });
 
   // ---------- logo and loading screen ----------
   // The logo is tried from this site first, then from the main site, and retried, so a slow or failed request no longer leaves the corner empty.

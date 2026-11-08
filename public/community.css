@@ -96,7 +96,7 @@ textarea{margin-top:8px;min-height:80px}
 .more-n{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.68);color:#fff;border-radius:99px;padding:2px 9px;font-size:.8rem;font-weight:700}
 .gal{display:grid;gap:8px;margin:6px 0 10px}
 .gal.n2,.gal.n3,.gal.n4{grid-template-columns:1fr 1fr}
-.gal a{display:block;border-radius:12px;overflow:hidden;background:var(--fill)}
+.gal a,.gal .gi{display:block;border-radius:12px;overflow:hidden;background:var(--fill)}
 .gal img{display:block;width:100%;height:100%;object-fit:cover;aspect-ratio:4/3}
 .gal.n1 img{aspect-ratio:auto;max-height:520px;object-fit:contain}
 .picks{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
@@ -207,8 +207,13 @@ html.vlock,html.vlock body{overflow:hidden}
 @keyframes vspin{to{transform:rotate(360deg)}}
 @media (max-width:600px){.vprev,.vnext{display:none}}
 @media (prefers-reduced-motion:reduce){.viewer{animation:none}.vspin{animation-duration:1.6s}}
-.gal a{cursor:zoom-in}
+
 
 /* live sync: new posts pill */
 .newpill{position:sticky;top:72px;z-index:5;display:block;margin:10px auto 0;border:0;border-radius:99px;background:var(--brand);color:#fff;font:inherit;font-weight:600;font-size:.92rem;padding:9px 18px;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer;animation:vfade .2s ease-out}
 .newpill[hidden]{display:none}
+
+/* pictures stay inside the page */
+.gal .gi{display:block;cursor:zoom-in;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+.gal .gi:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:12px}
+img{-webkit-touch-callout:none;-webkit-user-drag:none}
