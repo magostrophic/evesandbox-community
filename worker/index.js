@@ -219,6 +219,7 @@ async function api(req, env, url) {
   if (path === '/api/posts' && method === 'GET') return listPosts(env, url);
   if (path === '/api/posts' && method === 'POST') return createPost(req, env);
   if (path === '/api/votes' && method === 'GET') return myVotes(req, env, url);
+  if (path === '/api/scores' && method === 'GET') return scores(req, env, url);
   if (path === '/api/report' && method === 'POST') return report(req, env);
 
   if ((m = path.match(/^\/api\/posts\/([a-z0-9]{8})$/))) {
@@ -255,6 +256,27 @@ async function listPosts(env, url) {
   } else rows = (await env.DB.prepare(POST_SQL + ' ORDER BY p.created DESC, p.id DESC LIMIT ?').bind(size + 1).all()).results;
   const done = rows.length <= size, page = rows.slice(0, size), last = page[page.length - 1];
   return json({ posts: page.map(postOut), cursor: done || !last ? null : last.created + '_' + last.id, done });
+}
+
+// Live sync: the page asks every few seconds for the current score and reply count of the posts on screen,
+// the signed-in person's own votes, which posts were deleted and how many newer posts exist.
+async function scores(req, env, url) {
+  const ids = (url.searchParams.get('ids') || '').split(',').filter((x) => ID_RE.test(x)).slice(0, 40);
+  const sinceRaw = url.searchParams.get('since');
+  const since = sinceRaw !== null && /^\d{1,15}$/.test(sinceRaw) ? parseInt(sinceRaw, 10) : null;
+  const u = await currentUser(env, req);
+  const ph = ids.map(() => '?').join(',');
+  const stmts = [];
+  if (ids.length) stmts.push(env.DB.prepare('SELECT id, score, reply_count FROM posts WHERE id IN (' + ph + ')').bind(...ids));
+  if (ids.length && u) stmts.push(env.DB.prepare('SELECT post_id, value FROM votes WHERE user_id = ? AND post_id IN (' + ph + ')').bind(u.id, ...ids));
+  if (since !== null) stmts.push(env.DB.prepare('SELECT COUNT(*) AS n FROM (SELECT 1 FROM posts WHERE created > ? LIMIT 99)').bind(since));
+  const res = stmts.length ? await env.DB.batch(stmts) : [];
+  let k = 0;
+  const out = { scores: {}, gone: [], mine: u ? {} : null, newer: 0 };
+  if (ids.length) { const rows = res[k++].results; rows.forEach((r) => { out.scores[r.id] = { s: r.score, r: r.reply_count }; }); out.gone = ids.filter((x) => !out.scores[x]); }
+  if (ids.length && u) res[k++].results.forEach((r) => { out.mine[r.post_id] = r.value; });
+  if (since !== null) out.newer = res[k++].results[0].n || 0;
+  return json(out);
 }
 
 async function myVotes(req, env, url) {
@@ -546,7 +568,7 @@ async function profilePage(req, env, url) {
     swap('<meta property="og:description" content="Ask questions, share what you know and help other students.">', '<meta property="og:description" content="' + desc + '">');
     swap('<meta property="og:url" content="https://community.evesandbox.com/">', '<meta property="og:url" content="' + esc(url.origin + '/id/' + row.username) + '">');
     swap('<link rel="canonical" href="https://community.evesandbox.com/">', '<link rel="canonical" href="' + esc(url.origin + '/id/' + row.username) + '">');
-    if (row.avatar) swap('<meta property="og:image" content="https://evesandbox.com/evesandbox.png">', '<meta property="og:image" content="' + esc(url.origin + '/img/a/' + row.id + '?v=' + row.avatar) + '">');
+    if (row.avatar) swap('<meta property="og:image" content="https://community.evesandbox.com/evesandbox.png">', '<meta property="og:image" content="' + esc(url.origin + '/img/a/' + row.id + '?v=' + row.avatar) + '">');
   }
   const h = new Headers(base.headers); h.delete('content-length'); h.delete('etag'); h.set('cache-control', 'no-cache');
   return new Response(req.method === 'HEAD' ? null : html, { status: 200, headers: h });
@@ -580,7 +602,7 @@ async function sharePage(req, env, url) {
   if (!p) return new Response('<!doctype html><meta charset="utf-8"><title>Post not found</title><meta name="robots" content="noindex"><meta http-equiv="refresh" content="3;url=/"><p>Post not found. <a href="/">Back to the community</a></p>', { status: 404, headers: H });
   const origin = url.origin, title = p.title.slice(0, 100);
   const desc = (p.body || 'A post in the Eve Sandbox Community.').replace(/\s+/g, ' ').slice(0, 200);
-  const img = p.img_count > 0 ? origin + '/img/' + p.id + '/0' : 'https://evesandbox.com/evesandbox.png';
+  const img = p.img_count > 0 ? origin + '/img/' + p.id + '/0' : origin + '/evesandbox.png';
   const dest = '/#/post/' + p.id;
   const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(title) + ' - Eve Sandbox Community</title>' +
     '<meta name="robots" content="noindex"><meta name="description" content="' + esc(desc) + '">' +

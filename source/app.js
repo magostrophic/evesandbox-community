@@ -368,21 +368,109 @@ export function start(store, cfg) {
   document.addEventListener('click', () => { const m = $('.umenu'); if (m && !m.hidden) m.hidden = true; });
 
   // ---------- votes ----------
+  // One vote request per post at a time, always carrying the newest choice, so quick clicks can never arrive out of order.
+  async function sendVote(p) {
+    p.sending = true; p.busy = (p.busy || 0) + 1;
+    try {
+      for (;;) {
+        const v = p.want;
+        let total;
+        try { total = await store.vote(me.uid, p.id, v); }
+        catch (e) {
+          p.score -= p.want - p.conf; p.myVote = p.conf; p.vlast = Date.now(); paintPost(p);   // undo only what was shown but never confirmed
+          toast(errText(e), true); return;
+        }
+        p.conf = v; p.vlast = Date.now();
+        if (p.want === v) { if (typeof total === 'number') p.score = total; paintPost(p); return; }
+      }
+    } finally { p.sending = false; p.busy -= 1; }
+  }
   function voteCol(p, onChange) {
     const sc = h('b', { class: 'sc', text: String(p.score) });
     const up = h('button', { class: 'vb' + (p.myVote === 1 ? ' on' : ''), type: 'button', 'aria-label': 'Upvote', 'aria-pressed': String(p.myVote === 1) }, icon('up', 20, 2.6));
     const dn = h('button', { class: 'vb' + (p.myVote === -1 ? ' on dn' : ''), type: 'button', 'aria-label': 'Downvote', 'aria-pressed': String(p.myVote === -1) }, icon('down', 20, 2.6));
-    const col = h('div', { class: 'vc' }, up, sc, dn);
-    const act = (dir) => needUser(async () => {
+    const col = h('div', { class: 'vc', 'data-pid': p.id }, up, sc, dn);
+    const act = (dir) => needUser(() => {
       const old = p.myVote || 0, nv = old === dir ? 0 : dir;
-      p.myVote = nv; p.score += nv - old; onChange();
-      try { await store.vote(me.uid, p.id, nv); }
-      catch (e) { p.myVote = old; p.score -= nv - old; onChange(); toast(errText(e), true); }
+      if (!p.sending) p.conf = old;        // what the server has now, in case this has to be undone
+      p.myVote = nv; p.score += nv - old; p.want = nv; p.vlast = Date.now();
+      paintPost(p);
+      if (!p.sending) sendVote(p);          // a running request will pick up the newest wish by itself
     });
     up.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); act(1); };
     dn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); act(-1); };
     return col;
   }
+  // Updates the numbers and arrows of one post wherever it is on screen, without rebuilding the page.
+  function paintPost(p) {
+    document.querySelectorAll('.vc[data-pid="' + p.id + '"]').forEach((col) => {
+      const sc = col.querySelector('.sc'), b = col.querySelectorAll('.vb');
+      if (sc && sc.textContent !== String(p.score)) sc.textContent = String(p.score);
+      if (b.length === 2) {
+        b[0].classList.toggle('on', p.myVote === 1); b[0].setAttribute('aria-pressed', String(p.myVote === 1));
+        b[1].classList.toggle('on', p.myVote === -1); b[1].classList.toggle('dn', p.myVote === -1); b[1].setAttribute('aria-pressed', String(p.myVote === -1));
+      }
+    });
+    document.querySelectorAll('.rc[data-pid="' + p.id + '"]').forEach((el) => {
+      const t = ' ' + p.replyCount + (el.hasAttribute('data-long') ? (p.replyCount === 1 ? ' reply' : ' replies') : '');
+      if (el.lastChild && el.lastChild.textContent !== t) el.lastChild.textContent = t;
+    });
+  }
+
+  // ---------- live sync ----------
+  // Every few seconds, while the page is open and in use, ask the server for the real scores and reply counts of what is on screen.
+  // Fast while you are using the page (3 s on a post, 5 s on the list), slower while you only watch it, and it stops after 10 quiet minutes.
+  const SYNC_IDLE = 10 * 60 * 1000;
+  const sync = { busy: false, last: 0, act: Date.now() };
+  ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'].forEach((n) => window.addEventListener(n, () => { sync.act = Date.now(); }, { passive: true }));
+  const syncDelay = () => {
+    const quiet = Date.now() - sync.act, onPost = route().name === 'post';
+    if (quiet < 60 * 1000) return onPost ? 3000 : 5000;
+    return 10000;
+  };
+  async function syncTick(force) {
+    if (sync.busy || document.visibilityState !== 'visible' || !cfg || !cfg.configured) return;
+    if (!force && Date.now() - sync.act > SYNC_IDLE) return;
+    const r = route();
+    let ids = [], since = null, list = [];
+    if (r.name === 'feed') {
+      if (feed.loading) return;
+      list = feed.posts.slice(0, 40); ids = list.map((p) => p.id);
+      if (feed.sort === 'new' && feed.sortLoaded) since = feed.posts.reduce((m, p) => Math.max(m, p.createdAt || 0), 0);
+    } else if (r.name === 'post' && current) { list = [current]; ids = [current.id]; }
+    else return;
+    if (!ids.length && since === null) return;
+    sync.busy = true;
+    const where = r.name + ':' + (current ? current.id : '') + ':' + feed.sort;
+    try {
+      const t0 = Date.now();
+      const d = await store.getScores(ids, since);
+      const r2 = route();
+      if (r2.name !== r.name || where !== r2.name + ':' + (current ? current.id : '') + ':' + feed.sort) return;
+      let repliesChanged = false;
+      list.forEach((p) => {
+        const sc = d.scores && d.scores[p.id];
+        if (!sc || p.busy || (p.vlast && p.vlast >= t0 - 50)) return;   // skip numbers that were asked for before my latest vote
+        p.score = sc.s;
+        if (p.replyCount !== sc.r) { p.replyCount = sc.r; repliesChanged = true; }
+        if (me && d.mine) p.myVote = d.mine[p.id] || 0;
+        paintPost(p);
+      });
+      const gone = (d.gone || []).filter((x) => ids.indexOf(x) >= 0);
+      if (gone.length) {
+        if (r.name === 'post') { toast('This post was deleted.'); current = null; go('/'); return; }
+        feed.posts = feed.posts.filter((p) => gone.indexOf(p.id) < 0);
+        if (hooks.redraw) hooks.redraw();
+      }
+      if (hooks.pill) hooks.pill(d.newer || 0);
+      if (repliesChanged && r.name === 'post' && hooks.replies) hooks.replies();
+    } catch (e) { /* try again at the next tick */ }
+    finally { sync.busy = false; sync.last = Date.now(); }
+  }
+  (function loop() { setTimeout(async () => { try { await syncTick(false); } finally { loop(); } }, syncDelay()); })();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - sync.last > 3000) syncTick(true); });
+  window.addEventListener('focus', () => { if (Date.now() - sync.last > 3000) syncTick(true); });
+
   async function refreshVotes() {
     const list = current ? [current] : feed.posts;
     if (!me || !list.length) return;
@@ -510,7 +598,7 @@ export function start(store, cfg) {
       p.body ? h('p', { class: 'ps', text: p.body.slice(0, 220) }) : null,
       p.images && p.images.length ? h('div', { class: 'pimgs' }, h('img', { src: p.images[0], alt: '', loading: 'lazy' }), p.images.length > 1 ? h('span', { class: 'more-n', text: '+' + (p.images.length - 1) }) : null) : null,
       h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 20, p.authorAvatar), h('span', { text: p.authorName }), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }),
-        h('span', { class: 'rc' }, icon('chat', 14, 2.2), ' ' + p.replyCount), h('span', { class: 'pid', text: '#' + p.id })));
+        h('span', { class: 'rc', 'data-pid': p.id }, icon('chat', 14, 2.2), ' ' + p.replyCount), h('span', { class: 'pid', text: '#' + p.id })));
     const card = h('article', { class: 'card post' }, voteCol(p, () => card.replaceWith(postCard(p))), a);
     return card;
   }
@@ -522,6 +610,7 @@ export function start(store, cfg) {
     goBtn.onclick = jump; goId.onkeydown = (e) => { if (e.key === 'Enter') jump(); };
     const tab = (s, l) => h('a', { class: 'tab' + (feed.sort === s ? ' on' : ''), href: s === 'top' ? '/#/top' : '/', text: l });
     const list = h('div', { class: 'plist' });
+    const pill = h('button', { class: 'newpill', type: 'button', hidden: true });
     const more = h('button', { class: 'btn more', type: 'button', text: 'Load more' });
     const status = h('div', { class: 'mute center' });
     const empty = h('div', { class: 'nopost', hidden: true }, icon('page', 64, 1.3), h('h2', { text: 'No posts yet' }), h('p', { class: 'mute', text: 'Be the first to start one!' }));
@@ -547,11 +636,13 @@ export function start(store, cfg) {
     }
     more.onclick = () => load(false);
     hooks.redraw = draw;
+    pill.onclick = () => { pill.hidden = true; window.scrollTo({ top: 0 }); load(true); };
+    hooks.pill = (n) => { if (feed.sort !== 'new') n = 0; pill.hidden = !n; if (n) pill.textContent = (n >= 99 ? '99+' : n) + (n === 1 ? ' new post' : ' new posts') + ' - show'; };
     const view = h('main', { class: 'wrap' },
       h('div', { class: 'hd' }, h('h1', { text: 'Community' }), h('p', { class: 'mute', text: 'Ask questions, share what you know and help other students.' })),
       postComposer(),
       h('div', { class: 'bar' }, h('div', { class: 'tabs' }, tab('new', 'New'), tab('top', 'Top')), h('div', { class: 'gid' }, goId, goBtn)),
-      list, status, empty, h('div', { class: 'center' }, more));
+      pill, list, status, empty, h('div', { class: 'center' }, more));
     if (feed.posts.length && feed.sortLoaded === feed.sort) { draw(); } else { feed.sortLoaded = feed.sort; load(true); }
     return view;
   }
@@ -740,7 +831,7 @@ export function start(store, cfg) {
           h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), idc),
           h('h1', { class: 'ptitle', text: p.title }), p.body ? h('p', { class: 'pb' }, rich(p.body)) : null,
           p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('a', { href: u, target: '_blank', rel: 'noopener', onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return; ev.preventDefault(); openViewer(p.images, i); } }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy' })))) : null,
-          h('div', { class: 'acts' }, h('span', { class: 'rc' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
+          h('div', { class: 'acts' }, h('span', { class: 'rc', 'data-pid': p.id, 'data-long': '1' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
       };
       const drawReplies = () => {
         rList.replaceChildren(...replies.map((r) => replyItem(p, r, (gone) => { const i = replies.findIndex((x) => x.id === gone); if (i >= 0) replies.splice(i, 1); drawReplies(); drawHead(); })));
@@ -780,6 +871,7 @@ export function start(store, cfg) {
       };
       drawHead(); drawBox(); holder.replaceChildren(head, box, h('h3', { class: 'rh', text: 'Replies' }), rList, rStat, h('div', { class: 'center' }, rMore));
       loadReplies();
+      hooks.replies = () => { if (rLoading) return; replies.length = 0; rCursor = null; rDone = false; loadReplies(); };
       hooks.redraw = () => { drawHead(); drawReplies(); const t = $('.comp textarea'); if (t) t.placeholder = me ? 'Write a reply...' : 'Sign in to reply'; };
     }).catch((e) => { if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
     return view;
@@ -944,7 +1036,7 @@ export function start(store, cfg) {
   function render() {
     const r = route();
     renderHeader();
-    hooks.redraw = null; current = null;
+    hooks.redraw = null; hooks.pill = null; hooks.replies = null; current = null;
     document.title = 'Eve Sandbox - Community';
     if (r.name === 'feed') {
       if (feed.sort !== r.sort) { feed.sort = r.sort; feed.posts = []; feed.cursor = null; feed.done = false; feed.sortLoaded = null; }
@@ -966,20 +1058,14 @@ export function start(store, cfg) {
   });
 
   // ---------- logo and loading screen ----------
-  // The logo is tried from this site first, then from the main site, and retried, so a slow or failed request no longer leaves the corner empty.
+  // The logo is the file /evesandbox.png in this repo. The CSS shows it; this only waits until it has arrived, so it can fade in.
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const tryImg = (u) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = u; });
   async function loadLogo() {
-    const list = ['/evesandbox.png', SITE + '/evesandbox.png'];
     for (let round = 0; round < 4; round++) {
-      // Both addresses are tried at the same time; whichever answers first is used.
-      const urls = list.map((base) => (round ? base + '?r=' + round : base));
-      const got = await new Promise((res) => {
-        let left = urls.length;
-        urls.forEach((u) => tryImg(u).then((ok) => { if (ok) res(u); else if (--left === 0) res(null); }));
-      });
-      if (got) {
-        document.documentElement.style.setProperty('--logo', 'url("' + got + '")');
+      const u = '/evesandbox.png' + (round ? '?r=' + round : '');
+      if (await tryImg(u)) {
+        if (round) document.documentElement.style.setProperty('--logo', 'url("' + u + '")');
         document.documentElement.classList.add('logo-ok');
         return true;
       }
