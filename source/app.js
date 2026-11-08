@@ -1,0 +1,729 @@
+// Eve Sandbox Community - the page. Everything the visitor typed is shown with textContent / text nodes,
+// never as HTML, so a post can not run code on the page.
+import { POST_ID } from './ids.js';
+
+const SITE = 'https://evesandbox.com';
+const PAGE = 20, REPLY_PAGE = 30, POST_GAP = 30000, REPLY_GAP = 10000; // the server enforces the same gaps
+const MAX_IMG = 5 * 1024 * 1024, MAX_IMGS = 4, IMG_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const ICONS = {
+  up: '<path d="M6 15l6-6 6 6"/>', down: '<path d="M6 9l6 6 6-6"/>',
+  share: '<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14"/>',
+  flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>', chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'
+};
+function icon(n, s = 18, w = 2) {
+  const e = document.createElement('span');
+  e.className = 'ic';
+  e.innerHTML = '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + w + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[n] || '') + '</svg>';
+  return e;
+}
+
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat(Infinity)) { if (c == null || c === false) continue; e.append(c.nodeType ? c : document.createTextNode(String(c))); }
+  return e;
+}
+const $ = (s, r) => (r || document).querySelector(s);
+
+function ago(ms) {
+  if (!ms) return 'just now';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 45) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  if (s < 86400 * 30) return Math.round(s / 86400) + 'd ago';
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+const full = (ms) => (ms ? new Date(ms).toLocaleString() : '');
+function hue(s) { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x % 360; }
+function avatar(uid, name, size, ver) {
+  const letter = h('span', { class: 'av', 'aria-hidden': 'true', text: (Array.from(name || '?')[0] || '?').toUpperCase() });
+  letter.style.background = 'hsl(' + hue(uid || name || '') + ',55%,46%)';
+  const fit = (e) => { if (size) { e.style.width = e.style.height = size + 'px'; e.style.fontSize = Math.round(size * 0.45) + 'px'; } return e; };
+  if (ver && uid) {
+    const img = h('img', { class: 'av pic', src: '/img/a/' + uid + '?v=' + ver, alt: '', loading: 'lazy' });
+    img.onerror = () => img.replaceWith(fit(letter));
+    return fit(img);
+  }
+  return fit(letter);
+}
+const USER_RE = /^[a-z0-9_]{3,20}$/;
+function slug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 20); }
+const MAX_AVATAR = 3 * 1024 * 1024;
+const joined = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+// Turns web addresses in plain text into links. Only http(s) addresses; everything else stays text.
+function rich(text) {
+  const out = [];
+  const re = /https?:\/\/[^\s<>"']+/gi;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    let url = m[0], tail = '';
+    while (/[.,;:!?)\]}]$/.test(url)) { tail = url.slice(-1) + tail; url = url.slice(0, -1); }
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(h('a', { href: url, target: '_blank', rel: 'noopener noreferrer nofollow ugc', text: url.length > 60 ? url.slice(0, 57) + '...' : url }));
+    if (tail) out.push(tail);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function cleanName(s) { return String(s || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30); }
+
+// Phone photos carry hidden details such as where they were taken. Drawing a JPEG again onto a canvas drops them
+// (and keeps the picture the right way up). Other types are sent as they are.
+async function prepImage(f) {
+  if (f.type !== 'image/jpeg' || !window.createImageBitmap) return f;
+  try {
+    const bm = await createImageBitmap(f);
+    let w = bm.width, hh = bm.height; const big = Math.max(w, hh);
+    if (big > 4096) { w = Math.round(w * 4096 / big); hh = Math.round(hh * 4096 / big); }
+    const c = document.createElement('canvas'); c.width = w; c.height = hh;
+    c.getContext('2d').drawImage(bm, 0, 0, w, hh);
+    if (bm.close) bm.close();
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+    if (blob && blob.size > 0) return new File([blob], f.name || 'photo.jpg', { type: 'image/jpeg' });
+  } catch (e) { /* keep the original */ }
+  return f;
+}
+
+const MSG = {
+  unavailable: 'Could not reach the server. Check your internet and try again.',
+  'sign-in': 'Please sign in again.',
+  'need-name': 'Choose a display name first (account menu, top right).',
+  banned: 'This account can not post, reply or vote.',
+  'slow-down': 'Please wait a little before posting again.',
+  'daily-limit': 'You have reached today\u2019s limit. Please try again tomorrow.',
+  'image-too-big': 'Each picture can be 5 MB at most.',
+  'too-many-images': 'You can add up to 4 pictures.',
+  'bad-image': 'Only JPEG, PNG, WebP or GIF pictures are allowed.',
+  'bad-name': 'Use at least 2 characters for the display name.',
+  'bad-username': 'Usernames use 3 to 20 letters, numbers or underscores.',
+  'reserved-username': 'That username is not available.',
+  'username-taken': 'That username is already taken. Try another.',
+  'username-wait': 'You can change your username once every 30 days.',
+  'bad-bio': 'The bio can be 300 characters at most.',
+  'bad-instagram': 'Instagram: type your username or profile link.',
+  'bad-discord': 'Discord: type your username or an invite link (discord.gg/...).',
+  'bad-x': 'X: type your username or profile link.',
+  'bad-youtube': 'YouTube: type your @handle or channel link.',
+  'bad-website': 'Website: use a full https:// address.',
+  'avatar-too-big': 'A profile picture can be 3 MB at most.',
+  'reserved-name': 'Please choose another name.',
+  forbidden: 'You are not allowed to do that.',
+  'not-found': 'That was not found. It may have been deleted.',
+  'not-configured': 'The community is still being set up. Please try again later.',
+  'bad-token': 'Sign-in could not be checked. Please try again.',
+  'popup-blocked': 'The sign-in window was blocked. Allow pop-ups for this site and press the button again.',
+  'unauthorized-domain': 'This address is not allowed for sign-in yet. The site owner must add it in Firebase (Authentication, Settings, Authorized domains).',
+  'sign-in-failed': 'Sign-in did not work. Please try again.'
+};
+const errText = (e) => MSG[e && e.code] || 'Something went wrong. Please try again.';
+
+export function start(store, cfg) {
+  const root = $('#app');
+  let me = null, ready = false, pending = null, seq = 0, lastPost = 0, lastReply = 0;
+  const hooks = { redraw: null };
+  const renderHeader = () => $('#hdr').replaceChildren(header());
+  const incomplete = () => !!me && (!me.name || !me.username);
+  function go(path) { if (location.pathname + location.search + location.hash !== path) history.pushState(null, '', path); render(); }
+  const userLink = (user, name, cls) => (user ? h('a', { class: cls || 'unl', href: '/id/' + user, text: name }) : h('b', { text: name }));
+  const feed = { sort: 'new', posts: [], cursor: null, done: false, loading: false, tk: 0, sortLoaded: null };
+  let current = null; // the post being read
+
+  // ---------- small helpers ----------
+  function toast(t, bad) {
+    const e = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status', text: t });
+    document.body.append(e);
+    setTimeout(() => e.classList.add('on'), 10);
+    setTimeout(() => { e.classList.remove('on'); setTimeout(() => e.remove(), 300); }, 3200);
+  }
+  function modal(build) {
+    const close = () => { back.remove(); document.removeEventListener('keydown', esc); };
+    const esc = (ev) => { if (ev.key === 'Escape') close(); };
+    const box = h('div', { class: 'mbox', role: 'dialog', 'aria-modal': 'true' });
+    const back = h('div', { class: 'mback', onclick: (ev) => { if (ev.target === back) close(); } }, box);
+    build(box, close);
+    document.body.append(back);
+    document.addEventListener('keydown', esc);
+    const f = box.querySelector('input,textarea,button.pri');
+    if (f) f.focus();
+    return close;
+  }
+  const confirmBox = (title, text, ok) => new Promise((res) => {
+    let done = false;
+    const fin = (v) => { if (!done) { done = true; res(v); } };
+    modal((box, close) => {
+      box.append(h('h3', { text: title }), h('p', { class: 'mute', text }),
+        h('div', { class: 'mrow' },
+          h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => { close(); fin(false); } }),
+          h('button', { class: 'btn danger', type: 'button', text: ok, onclick: () => { close(); fin(true); } })));
+    });
+    const obs = new MutationObserver(() => { if (!document.querySelector('.mback')) { fin(false); obs.disconnect(); } });
+    obs.observe(document.body, { childList: true });
+  });
+
+  // ---------- sign in ----------
+  function signInBox() {
+    modal((box, close) => {
+      box.parentNode.classList.add('signin');
+      const err = h('p', { class: 'merr', hidden: true });
+      const slot = h('div', { class: 'gslot' }, h('p', { class: 'mute center', text: 'Loading...' }));
+      const hooks = {
+        start() { freshSignIn = true; err.hidden = true; },
+        cancel() { freshSignIn = false; },
+        fail(e) { freshSignIn = false; err.hidden = false; err.textContent = errText(e); }
+      };
+      box.append(h('h3', { text: 'Join the community' }),
+        h('p', { class: 'mute', text: 'Sign in to post, reply and vote. Reading is open to everyone. You choose the name others see; your email is never shown.' }),
+        slot, err,
+        h('p', { class: 'fine' }, 'By continuing you agree to the ', h('a', { href: SITE + '/terms/', target: '_blank', rel: 'noopener', text: 'Terms' }), ' and ', h('a', { href: SITE + '/privacy/', target: '_blank', rel: 'noopener', text: 'Privacy' }), '.'));
+      const gb = h('div', { class: 'gbox' });
+      Promise.resolve(store.renderSignIn(gb, hooks)).then(() => slot.replaceChildren(gb), (e) => { slot.replaceChildren(); hooks.fail(e); });
+    });
+  }
+  function nameBox(isNew, then) {
+    modal((box, close) => {
+      const nm = h('input', { id: 'dname', type: 'text', maxlength: '30', autocomplete: 'off', value: cleanName(me.name || me.suggest), 'aria-label': 'Display name' });
+      const us = h('input', { id: 'duser', type: 'text', maxlength: '20', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: me.username || slug(me.name || me.suggest), 'aria-label': 'Username' });
+      const err = h('p', { class: 'merr', hidden: true });
+      const go2 = h('button', { class: 'btn pri', type: 'button', text: 'Continue' });
+      const save = async () => {
+        const n = cleanName(nm.value), un = us.value.trim().toLowerCase().replace(/^@/, '');
+        if (n.length < 2) { err.hidden = false; err.textContent = errText({ code: 'bad-name' }); return; }
+        if (!USER_RE.test(un)) { err.hidden = false; err.textContent = errText({ code: 'bad-username' }); return; }
+        go2.disabled = true;
+        try { await store.setName(me.uid, n, un); me.name = n; me.username = un; close(); renderHeader(); if (then) then(); }
+        catch (e) { go2.disabled = false; err.hidden = false; err.textContent = errText(e); }
+      };
+      go2.onclick = save;
+      nm.onkeydown = us.onkeydown = (ev) => { if (ev.key === 'Enter') save(); };
+      box.append(h('h3', { text: 'Set up your profile' }),
+        h('label', { class: 'fl2', for: 'dname', text: 'Display name' }), nm,
+        h('p', { class: 'fine', text: 'Shown on your posts and replies. It does not have to be your real name.' }),
+        h('label', { class: 'fl2', for: 'duser', text: 'Username' }), us,
+        h('p', { class: 'fine', text: 'Your profile address will be ' + location.host + '/id/username. 3 to 20 letters, numbers or underscores.' }),
+        err, h('div', { class: 'mrow' }, go2));
+    });
+  }
+  // Runs fn once the visitor is signed in and has a name.
+  function needUser(fn) {
+    if (!ready) { toast('One moment...'); return; }
+    if (!me) { pending = fn; signInBox(); return; }
+    if (incomplete()) { nameBox(true, fn); return; }
+    fn();
+  }
+  function onAuth(u) {
+    const was = me;
+    me = u; ready = true;
+    if (u && u.error) { toast(errText(u.error), true); u = null; me = null; }
+    renderHeader();
+    if (me) { document.querySelectorAll('.mback.signin').forEach((x) => x.remove()); refreshVotes(); if (hooks.redraw) hooks.redraw(); }
+    else {
+      feed.posts.forEach((p) => { p.myVote = 0; }); if (current) current.myVote = 0;
+      if (hooks.redraw) hooks.redraw();
+    }
+    if (me && pending) {
+      const f = pending; pending = null;
+      if (incomplete()) { document.querySelectorAll('.mback').forEach((x) => x.remove()); nameBox(true, f); } else f();
+    } else if (incomplete() && freshSignIn) { document.querySelectorAll('.mback').forEach((x) => x.remove()); nameBox(true); }
+    freshSignIn = false;
+  }
+  let freshSignIn = false;
+
+  // ---------- header, footer ----------
+  function header() {
+    const right = h('div', { class: 'hr' });
+    if (!ready) right.append(h('span', { class: 'mute', text: ' ' }));
+    else if (!me) right.append(h('button', { class: 'btn pri sm', type: 'button', text: 'Sign in', onclick: signInBox }));
+    else {
+      const menu = h('div', { class: 'umenu', hidden: true },
+        h('div', { class: 'un' }, h('b', { text: me.name || 'New member' }), me.admin ? h('span', { class: 'chip', text: 'Admin' }) : null),
+        h('button', { type: 'button', text: 'My profile', onclick: () => { menu.hidden = true; if (incomplete()) nameBox(true); else go('/id/' + me.username); } }),
+        h('button', { type: 'button', text: 'Sign out', onclick: () => { menu.hidden = true; store.signOut(); } }));
+      const b = h('button', { class: 'ub', type: 'button', 'aria-label': 'Account menu', 'aria-expanded': 'false' }, avatar(me.uid, me.name || '?', 30, me.avatar));
+      b.onclick = (ev) => { ev.stopPropagation(); menu.hidden = !menu.hidden; b.setAttribute('aria-expanded', String(!menu.hidden)); };
+      right.append(b, menu);
+    }
+    return h('header', { class: 'top' }, h('div', { class: 'top-in' },
+      h('a', { class: 'logo', href: SITE + '/', 'aria-label': 'Eve Sandbox home' }, h('span', { class: 'lm', role: 'presentation' }), h('span', { class: 'lt' }, 'Eve ', h('span', { text: 'Sandbox' }))),
+      h('a', { class: 'tag', href: '/', text: 'Community' }), right));
+  }
+  const footer = () => h('footer', { class: 'foot' }, h('div', { class: 'foot-in' },
+    h('span', {}, '© ' + new Date().getFullYear() + ' Eve Sandbox'),
+    h('span', { class: 'fl' }, h('a', { href: SITE + '/', text: 'Eve Sandbox' }), h('a', { href: SITE + '/terms/', text: 'Terms' }), h('a', { href: SITE + '/privacy/', text: 'Privacy' }), h('a', { href: SITE + '/contact/', text: 'Contact' }))));
+  document.addEventListener('click', () => { const m = $('.umenu'); if (m && !m.hidden) m.hidden = true; });
+
+  // ---------- votes ----------
+  function voteCol(p, onChange) {
+    const sc = h('b', { class: 'sc', text: String(p.score) });
+    const up = h('button', { class: 'vb' + (p.myVote === 1 ? ' on' : ''), type: 'button', 'aria-label': 'Upvote', 'aria-pressed': String(p.myVote === 1) }, icon('up', 20, 2.6));
+    const dn = h('button', { class: 'vb' + (p.myVote === -1 ? ' on dn' : ''), type: 'button', 'aria-label': 'Downvote', 'aria-pressed': String(p.myVote === -1) }, icon('down', 20, 2.6));
+    const col = h('div', { class: 'vc' }, up, sc, dn);
+    const act = (dir) => needUser(async () => {
+      const old = p.myVote || 0, nv = old === dir ? 0 : dir;
+      p.myVote = nv; p.score += nv - old; onChange();
+      try { await store.vote(me.uid, p.id, nv); }
+      catch (e) { p.myVote = old; p.score -= nv - old; onChange(); toast(errText(e), true); }
+    });
+    up.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); act(1); };
+    dn.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); act(-1); };
+    return col;
+  }
+  async function refreshVotes() {
+    const list = current ? [current] : feed.posts;
+    if (!me || !list.length) return;
+    try {
+      const v = await store.getMyVotes(me.uid, list.map((p) => p.id));
+      list.forEach((p) => { p.myVote = v[p.id] || 0; });
+      if (hooks.redraw) hooks.redraw();
+    } catch (e) { /* votes just show as not voted */ }
+  }
+
+  // ---------- share, report, delete ----------
+  function postUrl(id) { return location.origin + '/p/' + id; }
+  async function share(p) {
+    const url = postUrl(p.id);
+    if (navigator.share) {
+      try { await navigator.share({ title: p.title, text: p.title, url }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    copyText(url, 'Link copied');
+  }
+  function copyText(t, msg) {
+    const ok = () => toast(msg);
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).then(ok, () => legacy()); } else legacy();
+    function legacy() {
+      const ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = t; document.body.append(ta); ta.select();
+      try { document.execCommand('copy'); ok(); } catch (e) { toast('Copy this link: ' + t); }
+      ta.remove();
+    }
+  }
+  function reportBox(postId, replyId) {
+    needUser(() => modal((box, close) => {
+      const ta = h('textarea', { maxlength: '300', rows: '3', placeholder: 'What is wrong with it? (optional)', 'aria-label': 'Reason' });
+      const err = h('p', { class: 'merr', hidden: true });
+      const go = h('button', { class: 'btn pri', type: 'button', text: 'Send report' });
+      go.onclick = async () => {
+        go.disabled = true;
+        try { await store.report(me.uid, postId, replyId || '', ta.value.trim().slice(0, 300)); close(); toast('Thanks, we will look at it.'); }
+        catch (e) { go.disabled = false; err.hidden = false; err.textContent = errText(e); }
+      };
+      box.append(h('h3', { text: replyId ? 'Report this reply' : 'Report this post' }), ta, err, h('div', { class: 'mrow' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close }), go));
+    }));
+  }
+  async function removePost(p) {
+    if (!(await confirmBox('Delete this post?', 'It will be removed for everyone, together with its replies and pictures, and cannot be brought back.', 'Delete'))) return;
+    try { await store.deletePost(p.id); toast('Post deleted'); feed.posts = feed.posts.filter((x) => x.id !== p.id); current = null; go('/'); }
+    catch (e) { toast(errText(e), true); }
+  }
+  const canDelete = (x) => me && (me.uid === x.authorId || me.admin);
+
+  // ---------- composers ----------
+  function cooldown(last, gap) {
+    const left = gap - (Date.now() - last);
+    if (left > 0) { toast('Please wait ' + Math.ceil(left / 1000) + ' seconds before posting again.', true); return true; }
+    return false;
+  }
+  function postComposer() {
+    const wrap = h('section', { class: 'card comp' });
+    let open = false, files = [], urls = [];
+    const clearFiles = () => { urls.forEach((u) => URL.revokeObjectURL(u)); urls = []; files = []; };
+    const draw = () => {
+      wrap.replaceChildren();
+      if (!open) {
+        const b = h('button', { class: 'cstart', type: 'button' }, icon('plus', 18, 2.4), h('span', { text: 'Start a post...' }));
+        b.onclick = () => needUser(() => { open = true; draw(); const t = $('#ptitle'); if (t) t.focus(); });
+        wrap.append(b); return;
+      }
+      const t = h('input', { id: 'ptitle', type: 'text', maxlength: '120', placeholder: 'Title', 'aria-label': 'Title' });
+      const b = h('textarea', { id: 'pbody', maxlength: '5000', rows: '5', placeholder: 'Write something (optional)', 'aria-label': 'Post text' });
+      const cnt = h('span', { class: 'mute', text: '0 / 5000' });
+      b.oninput = () => { cnt.textContent = b.value.length + ' / 5000'; };
+      const err = h('p', { class: 'merr', hidden: true });
+      const showErr = (m) => { err.hidden = false; err.textContent = m; };
+      const picks = h('div', { class: 'picks', hidden: true });
+      const pcnt = h('span', { class: 'mute', text: '' });
+      const fin = h('input', { type: 'file', accept: IMG_TYPES.join(','), multiple: true, hidden: true, 'aria-label': 'Add pictures' });
+      const drawPicks = () => {
+        picks.hidden = !files.length;
+        picks.replaceChildren(...files.map((f, i) => {
+          const rm = h('button', { type: 'button', 'aria-label': 'Remove picture ' + (i + 1) }, icon('x', 12, 3));
+          rm.onclick = () => { URL.revokeObjectURL(urls[i]); urls.splice(i, 1); files.splice(i, 1); drawPicks(); };
+          return h('div', { class: 'pk' }, h('img', { src: urls[i], alt: 'Picture ' + (i + 1) + ' to upload' }), rm);
+        }));
+        pcnt.textContent = files.length ? files.length + ' / ' + MAX_IMGS + ' pictures' : '';
+        addBtn.disabled = files.length >= MAX_IMGS;
+      };
+      const addBtn = h('button', { class: 'btn sm', type: 'button' }, icon('image', 16, 2.2), ' Add pictures');
+      addBtn.onclick = () => fin.click();
+      fin.onchange = async () => {
+        const list = Array.from(fin.files || []); fin.value = ''; err.hidden = true;
+        for (const f of list) {
+          if (files.length >= MAX_IMGS) { showErr('You can add up to ' + MAX_IMGS + ' pictures.'); break; }
+          if (IMG_TYPES.indexOf(f.type) < 0) { showErr('Only JPEG, PNG, WebP or GIF pictures are allowed.'); continue; }
+          if (f.size > MAX_IMG) { showErr('Each picture can be 5 MB at most. "' + f.name + '" is too big.'); continue; }
+          const g = await prepImage(f);
+          if (g.size > MAX_IMG) { showErr('Each picture can be 5 MB at most. "' + f.name + '" is too big.'); continue; }
+          files.push(g); urls.push(URL.createObjectURL(g));
+        }
+        drawPicks();
+      };
+      const postBtn = h('button', { class: 'btn pri', type: 'button', text: 'Post' });
+      postBtn.onclick = () => {
+        const title = t.value.trim(), body = b.value.trim();
+        if (!title) { err.hidden = false; err.textContent = 'Give your post a title.'; return; }
+        if (cooldown(lastPost, POST_GAP)) return;
+        postBtn.disabled = true; err.hidden = true;
+        needUser(async () => {
+          try {
+            const id = await store.createPost(me.uid, me.name, title, body, files.slice());
+            lastPost = Date.now(); feed.posts = []; feed.cursor = null; feed.done = false; clearFiles();
+            toast('Posted'); go('/#/post/' + id);
+          } catch (e) { postBtn.disabled = false; err.hidden = false; err.textContent = errText(e); }
+        });
+        setTimeout(() => { postBtn.disabled = false; }, 4000);
+      };
+      wrap.append(t, b, picks, h('div', { class: 'crow' }, h('span', { class: 'cl' }, addBtn, fin, pcnt, cnt), h('div', { class: 'mrow' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => { open = false; clearFiles(); draw(); } }), postBtn)), h('p', { class: 'fine' }, 'Pictures: JPEG, PNG, WebP or GIF, up to ' + MAX_IMGS + ' and 5 MB each. Replies are text only.'), err);
+    };
+    draw();
+    return wrap;
+  }
+
+  // ---------- views ----------
+  function postCard(p) {
+    const a = h('a', { class: 'pbody', href: '/#/post/' + p.id },
+      h('h2', { class: 'pt', text: p.title }),
+      p.body ? h('p', { class: 'ps', text: p.body.slice(0, 220) }) : null,
+      p.images && p.images.length ? h('div', { class: 'pimgs' }, h('img', { src: p.images[0], alt: '', loading: 'lazy' }), p.images.length > 1 ? h('span', { class: 'more-n', text: '+' + (p.images.length - 1) }) : null) : null,
+      h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 20, p.authorAvatar), h('span', { text: p.authorName }), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }),
+        h('span', { class: 'rc' }, icon('chat', 14, 2.2), ' ' + p.replyCount), h('span', { class: 'pid', text: '#' + p.id })));
+    const card = h('article', { class: 'card post' }, voteCol(p, () => card.replaceWith(postCard(p))), a);
+    return card;
+  }
+  function feedView() {
+    const my = ++seq;
+    const goId = h('input', { type: 'text', placeholder: 'Go to post ID', maxlength: '12', 'aria-label': 'Go to post ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    const goBtn = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Go' }, icon('search', 16, 2.4));
+    const jump = () => { let v = goId.value.trim().toLowerCase(); const m = v.match(/post\/([a-z0-9]+)/); v = m ? m[1] : v.replace(/^#/, ''); if (!v) return; go('/#/post/' + encodeURIComponent(v)); };
+    goBtn.onclick = jump; goId.onkeydown = (e) => { if (e.key === 'Enter') jump(); };
+    const tab = (s, l) => h('a', { class: 'tab' + (feed.sort === s ? ' on' : ''), href: s === 'top' ? '/#/top' : '/', text: l });
+    const list = h('div', { class: 'plist' });
+    const more = h('button', { class: 'btn more', type: 'button', text: 'Load more' });
+    const status = h('div', { class: 'mute center' });
+    const draw = () => {
+      list.replaceChildren(...feed.posts.map(postCard));
+      more.hidden = feed.done || !feed.posts.length;
+      status.textContent = feed.loading ? 'Loading...' : (!feed.posts.length && feed.done ? 'No posts yet. Be the first to start one!' : '');
+    };
+    async function load(reset) {
+      if (feed.loading && !reset) return;
+      if (reset) { feed.posts = []; feed.cursor = null; feed.done = false; }
+      const tk = ++feed.tk;
+      feed.loading = true; draw();
+      try {
+        const r = await store.listPosts({ sort: feed.sort, after: feed.cursor, size: PAGE });
+        if (tk !== feed.tk) return;
+        if (me) { try { const v = await store.getMyVotes(me.uid, r.posts.map((p) => p.id)); r.posts.forEach((p) => { p.myVote = v[p.id] || 0; }); } catch (e) { /* ignore */ } }
+        if (tk !== feed.tk) return;
+        feed.posts = feed.posts.concat(r.posts); feed.cursor = r.cursor; feed.done = r.done; feed.loading = false;
+        draw();
+      } catch (e) { if (tk !== feed.tk) return; feed.loading = false; status.textContent = ''; list.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => load(true) }))); more.hidden = true; }
+    }
+    more.onclick = () => load(false);
+    hooks.redraw = draw;
+    const view = h('main', { class: 'wrap' },
+      h('div', { class: 'hd' }, h('h1', { text: 'Community' }), h('p', { class: 'mute', text: 'Ask questions, share what you know and help other students.' })),
+      postComposer(),
+      h('div', { class: 'bar' }, h('div', { class: 'tabs' }, tab('new', 'New'), tab('top', 'Top')), h('div', { class: 'gid' }, goId, goBtn)),
+      list, status, h('div', { class: 'center' }, more));
+    if (feed.posts.length && feed.sortLoaded === feed.sort) { draw(); } else { feed.sortLoaded = feed.sort; load(true); }
+    return view;
+  }
+
+  function replyItem(post, r, redraw) {
+    const del = canDelete(r) ? h('button', { class: 'lnk', type: 'button' }, icon('trash', 14, 2.2), ' Delete') : null;
+    if (del) del.onclick = async () => {
+      if (!(await confirmBox('Delete this reply?', 'It will be removed for everyone.', 'Delete'))) return;
+      try { await store.deleteReply(post.id, r.id); post.replyCount = Math.max(0, post.replyCount - 1); redraw(r.id); toast('Reply deleted'); } catch (e) { toast(errText(e), true); }
+    };
+    const rep = h('button', { class: 'lnk', type: 'button' }, icon('flag', 14, 2.2), ' Report');
+    rep.onclick = () => reportBox(post.id, r.id);
+    return h('div', { class: 'reply', 'data-id': r.id },
+      h('div', { class: 'meta' }, avatar(r.authorId, r.authorName, 22, r.authorAvatar), userLink(r.authorUser, r.authorName), h('span', { text: '·' }), h('span', { text: ago(r.createdAt), title: full(r.createdAt) })),
+      h('p', { class: 'rb' }, rich(r.body)), h('div', { class: 'acts' }, rep, del));
+  }
+
+  function postView(id) {
+    const my = ++seq;
+    const view = h('main', { class: 'wrap' });
+    if (!POST_ID.test(id)) { view.append(backLink(), notFound()); return view; }
+    const holder = h('div', {}, h('div', { class: 'card empty mute', text: 'Loading...' }));
+    view.append(backLink(), holder);
+    store.getPost(id).then(async (p) => {
+      if (my !== seq) return;
+      if (!p) { holder.replaceChildren(notFound()); return; }
+      current = p; document.title = 'Eve Sandbox - ' + p.title.slice(0, 60);
+      p.myVote = 0;
+      if (me) { try { p.myVote = (await store.getMyVotes(me.uid, [p.id]))[p.id] || 0; } catch (e) { /* ignore */ } }
+      if (my !== seq) return;
+      const replies = []; let rCursor = null, rDone = false, rLoading = false;
+      const rList = h('div', { class: 'rlist' }), rMore = h('button', { class: 'btn more', type: 'button', text: 'Load more replies' }), rStat = h('p', { class: 'mute center' });
+      const head = h('section', { class: 'card pfull' });
+      const drawHead = () => {
+        const sh = h('button', { class: 'lnk', type: 'button' }, icon('share', 15, 2.2), ' Share'); sh.onclick = () => share(p);
+        const rp = h('button', { class: 'lnk', type: 'button' }, icon('flag', 15, 2.2), ' Report'); rp.onclick = () => reportBox(p.id, '');
+        const dl = canDelete(p) ? h('button', { class: 'lnk', type: 'button' }, icon('trash', 15, 2.2), ' Delete') : null; if (dl) dl.onclick = () => removePost(p);
+        const idc = h('button', { class: 'pid btnid', type: 'button', title: 'Copy post ID' }, '#' + p.id); idc.onclick = () => copyText(p.id, 'Post ID copied');
+        head.replaceChildren(voteCol(p, drawHead), h('div', { class: 'pmain' },
+          h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), idc),
+          h('h1', { class: 'ptitle', text: p.title }), p.body ? h('p', { class: 'pb' }, rich(p.body)) : null,
+          p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy' })))) : null,
+          h('div', { class: 'acts' }, h('span', { class: 'rc' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
+      };
+      const drawReplies = () => {
+        rList.replaceChildren(...replies.map((r) => replyItem(p, r, (gone) => { const i = replies.findIndex((x) => x.id === gone); if (i >= 0) replies.splice(i, 1); drawReplies(); drawHead(); })));
+        rMore.hidden = rDone; rStat.textContent = rLoading ? 'Loading...' : (!replies.length ? 'No replies yet.' : '');
+      };
+      async function loadReplies() {
+        if (rLoading) return; rLoading = true; drawReplies();
+        try { const r = await store.listReplies(p.id, { after: rCursor, size: REPLY_PAGE }); if (my !== seq) return; replies.push(...r.replies); rCursor = r.cursor; rDone = r.done; }
+        catch (e) { toast(errText(e), true); }
+        rLoading = false; drawReplies();
+      }
+      rMore.onclick = loadReplies;
+      const box = h('section', { class: 'card comp' });
+      const drawBox = () => {
+        box.replaceChildren();
+        const ta = h('textarea', { maxlength: '2000', rows: '3', placeholder: me ? 'Write a reply...' : 'Sign in to reply', 'aria-label': 'Reply' });
+        const err = h('p', { class: 'merr', hidden: true });
+        const go = h('button', { class: 'btn pri', type: 'button', text: 'Reply' });
+        ta.onfocus = () => { if (!me) { ta.blur(); needUser(() => { drawBox(); const t = $('.comp textarea'); if (t) t.focus(); }); } };
+        go.onclick = () => {
+          const body = ta.value.trim();
+          if (!body) { err.hidden = false; err.textContent = 'Write something first.'; return; }
+          if (cooldown(lastReply, REPLY_GAP)) return;
+          go.disabled = true; err.hidden = true;
+          needUser(async () => {
+            try {
+              const rid = await store.createReply(me.uid, me.name, p.id, body);
+              lastReply = Date.now(); p.replyCount += 1; ta.value = '';
+              replies.push({ id: rid, body, authorId: me.uid, authorName: me.name, authorUser: me.username, authorAvatar: me.avatar, createdAt: Date.now() });
+              drawReplies(); drawHead(); toast('Reply posted');
+            } catch (e) { err.hidden = false; err.textContent = errText(e); }
+            go.disabled = false;
+          });
+          setTimeout(() => { go.disabled = false; }, 4000);
+        };
+        box.append(ta, err, h('div', { class: 'mrow' }, go));
+      };
+      drawHead(); drawBox(); holder.replaceChildren(head, box, h('h3', { class: 'rh', text: 'Replies' }), rList, rStat, h('div', { class: 'center' }, rMore));
+      loadReplies();
+      hooks.redraw = () => { drawHead(); drawReplies(); const t = $('.comp textarea'); if (t) t.placeholder = me ? 'Write a reply...' : 'Sign in to reply'; };
+    }).catch((e) => { if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    return view;
+  }
+  const backLink = () => h('a', { class: 'back', href: '/' }, icon('back', 16, 2.4), ' All posts');
+  const notFound = () => h('div', { class: 'card empty' }, h('h2', { text: 'Post not found' }), h('p', { class: 'mute', text: 'It may have been deleted, or the ID is not right.' }), h('a', { class: 'btn pri', href: '/', text: 'Back to the community' }));
+
+
+  // ---------- profiles ----------
+  function linkChips(links) {
+    const out = [];
+    const ext = (label, val, href) => h('a', { class: 'lchip', href, target: '_blank', rel: 'noopener noreferrer nofollow ugc' }, h('b', { text: label }), val ? ' ' + val : '');
+    if (links.instagram) out.push(ext('Instagram', '@' + links.instagram, 'https://instagram.com/' + encodeURIComponent(links.instagram)));
+    if (links.discord) {
+      if (/^discord\.gg\/[A-Za-z0-9-]+$/.test(links.discord)) out.push(ext('Discord', 'invite', 'https://' + links.discord));
+      else { const b = h('button', { class: 'lchip', type: 'button', title: 'Copy Discord username' }, h('b', { text: 'Discord' }), ' ' + links.discord); b.onclick = () => copyText(links.discord, 'Discord username copied'); out.push(b); }
+    }
+    if (links.x) out.push(ext('X', '@' + links.x, 'https://x.com/' + encodeURIComponent(links.x)));
+    if (links.youtube) out.push(ext('YouTube', '@' + links.youtube, 'https://youtube.com/@' + encodeURIComponent(links.youtube)));
+    if (links.website && /^https:\/\//.test(links.website)) { let host = 'link'; try { host = new URL(links.website).hostname; } catch (e) { /* keep */ } out.push(ext('Website', host, links.website)); }
+    return out;
+  }
+  // Cuts the middle square out of the picture and shrinks it to 512 px. This also drops any hidden photo details.
+  async function squareJpeg(f) {
+    if (!window.createImageBitmap) return f;
+    try {
+      const bm = await createImageBitmap(f);
+      const side = Math.min(bm.width, bm.height), out = Math.min(512, side);
+      const c = document.createElement('canvas'); c.width = c.height = out;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, out, out);
+      x.drawImage(bm, (bm.width - side) / 2, (bm.height - side) / 2, side, side, 0, 0, out, out);
+      if (bm.close) bm.close();
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+      if (blob && blob.size) return blob;
+    } catch (e) { /* use the original */ }
+    return f;
+  }
+  function editBox(pf, done) {
+    modal((box, close) => {
+      box.classList.add('wide');
+      const err = h('p', { class: 'merr', hidden: true });
+      const showErr = (m) => { err.hidden = false; err.textContent = m; };
+      let ver = pf.avatar;
+      const avrow = h('div', { class: 'avrow' });
+      const fin = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', hidden: true, 'aria-label': 'Profile picture' });
+      const drawAv = () => {
+        const pick = h('button', { class: 'btn sm', type: 'button', text: ver ? 'Change picture' : 'Add picture' });
+        pick.onclick = () => fin.click();
+        const rm = ver ? h('button', { class: 'btn sm', type: 'button', text: 'Remove' }) : null;
+        if (rm) rm.onclick = async () => { try { await store.removeAvatar(); ver = 0; pf.avatar = 0; me.avatar = 0; drawAv(); renderHeader(); done(); } catch (e) { showErr(errText(e)); } };
+        avrow.replaceChildren(avatar(pf.uid, pf.name, 64, ver), h('div', {}, h('div', { class: 'avbtns' }, pick, rm), h('p', { class: 'fine', text: 'JPEG, PNG or WebP, up to 3 MB.' })));
+      };
+      fin.onchange = async () => {
+        const f = fin.files && fin.files[0]; fin.value = ''; err.hidden = true;
+        if (!f) return;
+        if (['image/jpeg', 'image/png', 'image/webp'].indexOf(f.type) < 0) { showErr('Use a JPEG, PNG or WebP picture.'); return; }
+        if (f.size > MAX_AVATAR) { showErr('A profile picture can be 3 MB at most.'); return; }
+        try {
+          const v = await store.setAvatar(await squareJpeg(f));
+          ver = v; pf.avatar = v; me.avatar = v; drawAv(); renderHeader(); done(); toast('Picture updated');
+        } catch (e) { showErr(errText(e)); }
+      };
+      drawAv();
+      const fld = (id, label, val, ph, max) => [h('label', { class: 'fl2', for: id, text: label }), h('input', { id, type: 'text', value: val || '', placeholder: ph || '', maxlength: String(max || 200), autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' })];
+      const L2 = pf.links || {};
+      const nm = fld('e-name', 'Display name', pf.name, '', 30), us = fld('e-user', 'Username', pf.username, '', 20);
+      const bio = h('textarea', { id: 'ebio', maxlength: '300', rows: '4', placeholder: 'Tell people a little about you', 'aria-label': 'Bio' }); bio.value = pf.bio || '';
+      const bc = h('span', { class: 'mute', text: bio.value.length + ' / 300' }); bio.oninput = () => { bc.textContent = bio.value.length + ' / 300'; };
+      const ig = fld('e-ig', 'Instagram', L2.instagram, 'username or profile link'), dc = fld('e-dc', 'Discord', L2.discord, 'username or invite link (discord.gg/...)'),
+        xx = fld('e-x', 'X', L2.x, 'username or profile link'), yt = fld('e-yt', 'YouTube', L2.youtube, '@handle or channel link'), wb = fld('e-web', 'Website', L2.website, 'https://...');
+      const lk = h('input', { type: 'checkbox', id: 'elikes', checked: !!pf.showLikes });
+      const go2 = h('button', { class: 'btn pri', type: 'button', text: 'Save' });
+      go2.onclick = async () => {
+        const name = cleanName(nm[1].value), un = us[1].value.trim().toLowerCase().replace(/^@/, '');
+        if (name.length < 2) return showErr(errText({ code: 'bad-name' }));
+        if (!USER_RE.test(un)) return showErr(errText({ code: 'bad-username' }));
+        err.hidden = true; go2.disabled = true;
+        try {
+          const r = await store.saveProfile({ name, username: un, bio: bio.value.trim(), showLikes: lk.checked,
+            links: { instagram: ig[1].value, discord: dc[1].value, x: xx[1].value, youtube: yt[1].value, website: wb[1].value } });
+          close(); toast('Profile saved'); renderHeader();
+          go('/id/' + r.username + location.search);
+        } catch (e) { go2.disabled = false; showErr(errText(e)); }
+      };
+      box.append(h('h3', { text: 'Edit profile' }), avrow, fin, ...nm, h('p', { class: 'fine', text: 'Shown on your posts and replies.' }), ...us,
+        h('p', { class: 'fine', text: 'Your address: ' + location.host + '/id/username. You can change the username once every 30 days.' }),
+        h('label', { class: 'fl2', for: 'ebio', text: 'Bio' }), bio, h('div', { class: 'crow' }, bc),
+        h('h4', { class: 'fl3', text: 'Links (all optional)' }), ...ig, ...dc, ...xx, ...yt, ...wb,
+        h('label', { class: 'chk' }, lk, ' Show the posts I like on my profile'),
+        h('p', { class: 'fine', text: 'Off by default. Only upvotes are shown, and only if you turn this on. Everything on a profile is public.' }),
+        err, h('div', { class: 'mrow' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close }), go2));
+    });
+  }
+
+  const EMPTY = { posts: 'No posts yet.', replies: 'No replies yet.', liked: 'No liked posts yet.' };
+  function profReply(r) {
+    return h('div', { class: 'reply' },
+      h('div', { class: 'meta' }, h('span', { text: 'Replied to' }), h('a', { class: 'unl', href: '/#/post/' + r.postId, text: r.postTitle || 'a post' }), h('span', { text: '·' }), h('span', { text: ago(r.createdAt), title: full(r.createdAt) })),
+      h('p', { class: 'rb' }, rich(r.body)));
+  }
+  function profileView(uname, tab) {
+    const my = ++seq;
+    const view = h('main', { class: 'wrap' });
+    const holder = h('div', {}, h('div', { class: 'card empty mute', text: 'Loading...' }));
+    view.append(backLink(), holder);
+    store.getProfile(uname).then((pf) => {
+      if (my !== seq) return;
+      if (!pf) { holder.replaceChildren(h('div', { class: 'card empty' }, h('h2', { text: 'Profile not found' }), h('p', { class: 'mute', text: 'There is no member with that username.' }), h('a', { class: 'btn pri', href: '/', text: 'Back to the community' }))); return; }
+      document.title = 'Eve Sandbox - ' + pf.name + ' (@' + pf.username + ')';
+      const isMe = () => !!me && me.uid === pf.uid;
+      const head = h('section', { class: 'card prof' });
+      const drawHead = () => {
+        const chips = linkChips(pf.links || {});
+        const edit = isMe() ? h('button', { class: 'btn sm', type: 'button' }, icon('edit', 15, 2.2), ' Edit profile') : null;
+        if (edit) edit.onclick = () => editBox(pf, drawHead);
+        head.replaceChildren(...[
+          h('div', { class: 'prow' }, avatar(pf.uid, pf.name, 84, pf.avatar), h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute', text: '@' + pf.username }), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) })), edit),
+          pf.bio ? h('p', { class: 'pbio' }, rich(pf.bio)) : null,
+          chips.length ? h('div', { class: 'lchips' }, chips) : null,
+          h('div', { class: 'pstats' }, h('span', {}, h('b', { text: String(pf.counts.posts) }), ' posts'), h('span', {}, h('b', { text: String(pf.counts.replies) }), ' replies'), pf.counts.likes != null ? h('span', {}, h('b', { text: String(pf.counts.likes) }), ' liked') : null)].filter(Boolean));
+      };
+      const kinds = [['posts', 'Posts', '/id/' + pf.username], ['replies', 'Replies', '/id/' + pf.username + '?tab=replies'], ['liked', 'Liked posts', '/id/' + pf.username + '?tab=liked']];
+      const tabs = h('div', { class: 'tabs ptabs' }, kinds.map((k) => h('a', { class: 'tab' + (tab === k[0] ? ' on' : ''), href: k[2], text: k[1] })));
+      const list = h('div', { class: 'plist' }), more = h('button', { class: 'btn more', type: 'button', text: 'Load more' }), stat = h('p', { class: 'mute center' });
+      let items = [], cursor = null, done = false, loading = false, hidden = false;
+      const drawList = () => {
+        if (hidden) { list.replaceChildren(h('div', { class: 'card empty' }, icon('lock', 22, 2), h('p', { class: 'mute', text: pf.name + ' keeps liked posts private.' }))); more.hidden = true; stat.textContent = ''; return; }
+        list.replaceChildren(...items.map(tab === 'replies' ? profReply : postCard));
+        more.hidden = done; stat.textContent = loading ? 'Loading...' : (!items.length && done ? EMPTY[tab] : '');
+      };
+      async function loadMore() {
+        if (loading) return; loading = true; drawList();
+        try {
+          const fn = tab === 'replies' ? store.listUserReplies : tab === 'liked' ? store.listUserLikes : store.listUserPosts;
+          const r = await fn.call(store, pf.username, { after: cursor, size: PAGE });
+          if (my !== seq) return;
+          if (r.hidden) hidden = true;
+          const got = r.posts || r.replies || [];
+          if (me && tab !== 'replies' && got.length) { try { const v = await store.getMyVotes(me.uid, got.map((x) => x.id)); got.forEach((x) => { x.myVote = v[x.id] || 0; }); } catch (e) { /* ignore */ } }
+          if (my !== seq) return;
+          items = items.concat(got); cursor = r.cursor; done = r.done;
+        } catch (e) { toast(errText(e), true); }
+        loading = false; drawList();
+      }
+      more.onclick = loadMore;
+      hooks.redraw = () => { drawHead(); if (tab === 'liked') { items = []; cursor = null; done = false; hidden = false; loadMore(); } else drawList(); };
+      drawHead(); holder.replaceChildren(head, h('div', { class: 'bar' }, tabs), list, stat, h('div', { class: 'center' }, more));
+      loadMore();
+    }).catch((e) => { if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    return view;
+  }
+
+  // ---------- router ----------
+  function route() {
+    const pm = location.pathname.match(/^\/id\/([^/]+)\/?$/);
+    if (pm) { let u = pm[1]; try { u = decodeURIComponent(u); } catch (e) { /* keep as typed */ } const t = new URLSearchParams(location.search).get('tab'); return { name: 'profile', user: u.toLowerCase(), tab: t === 'replies' || t === 'liked' ? t : 'posts' }; }
+    const hsh = location.hash || '#/';
+    const m = hsh.match(/^#\/post\/([^/?]+)/);
+    if (m) { let id = m[1]; try { id = decodeURIComponent(id); } catch (e) { /* keep as typed */ } return { name: 'post', id: id.toLowerCase() }; }
+    return { name: 'feed', sort: hsh.indexOf('#/top') === 0 ? 'top' : 'new' };
+  }
+  function render() {
+    const r = route();
+    renderHeader();
+    hooks.redraw = null; current = null;
+    document.title = 'Eve Sandbox - Community';
+    if (r.name === 'feed') {
+      if (feed.sort !== r.sort) { feed.sort = r.sort; feed.posts = []; feed.cursor = null; feed.done = false; feed.sortLoaded = null; }
+      root.replaceChildren(feedView());
+    } else if (r.name === 'profile') root.replaceChildren(profileView(r.user, r.tab));
+    else root.replaceChildren(postView(r.id));
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener('hashchange', render);
+  window.addEventListener('popstate', render);
+  // Links to pages of the community open without reloading the whole page.
+  document.addEventListener('click', (ev) => {
+    if (ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const a = ev.target.closest && ev.target.closest('a[href]');
+    if (!a || a.target || a.hasAttribute('download')) return;
+    let u; try { u = new URL(a.href, location.href); } catch (e) { return; }
+    if (u.origin !== location.origin || !(u.pathname === '/' || u.pathname.indexOf('/id/') === 0)) return;
+    ev.preventDefault(); go(u.pathname + u.search + u.hash);
+  });
+
+  // ---------- go ----------
+  $('#ftr').replaceChildren(footer());
+  if (!cfg || !cfg.configured) {
+    renderHeader();
+    root.replaceChildren(h('main', { class: 'wrap' }, h('div', { class: 'card empty' }, h('h2', { text: 'The community is not open yet' }), h('p', { class: 'mute', text: 'It is being set up. Please come back soon.' }), h('a', { class: 'btn pri', href: SITE + '/', text: 'Back to Eve Sandbox' }))));
+    return;
+  }
+  render();
+  store.onAuth(onAuth);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "evesandbox-community-source",
+  "private": true,
+  "description": "Only needed if you want to rebuild public/app.js from these files (sh build.sh). Not needed to deploy.",
+  "dependencies": { "esbuild": "^0.28.2", "firebase": "10.14.1" }
+}
