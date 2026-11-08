@@ -10,7 +10,7 @@ const ICONS = {
   up: '<path d="M6 15l6-6 6 6"/>', down: '<path d="M6 9l6 6 6-6"/>',
   share: '<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14"/>',
   flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-  back: '<path d="M15 18l-6-6 6-6"/>', chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>', fwd: '<path d="M9 6l6 6-6 6"/>', chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -569,6 +569,152 @@ export function start(store, cfg) {
       h('p', { class: 'rb' }, rich(r.body)), h('div', { class: 'acts' }, rep, del));
   }
 
+  // ---------- picture viewer ----------
+  // Opens a post's pictures on top of the page: zoom (wheel, double click or pinch), drag to move, arrows or swipe for the next picture, X / Esc / click outside / swipe down to close.
+  function openViewer(urls, start) {
+    if (document.querySelector('.viewer')) return;
+    const n = urls.length;
+    let i = 0, scale = 1, tx = 0, ty = 0, moved = false, swipe = null, loadTk = 0;
+    const pts = new Map();
+    let pinch = null, pan = null, downOnStage = false;
+    const prevFocus = document.activeElement;
+    const img = h('img', { class: 'vimg', alt: '', draggable: 'false', decoding: 'async' });
+    const spin = h('div', { class: 'vspin', 'aria-hidden': 'true' });
+    const fail = h('p', { class: 'vfail', hidden: true, text: 'This picture could not be loaded.' });
+    const stage = h('div', { class: 'vstage' }, img, spin, fail);
+    const closeBtn = h('button', { class: 'vbtn vclose', type: 'button', 'aria-label': 'Close picture' }, icon('x', 22, 2.2));
+    const prevBtn = h('button', { class: 'vbtn vprev', type: 'button', 'aria-label': 'Previous picture', hidden: n < 2 }, icon('back', 24, 2.2));
+    const nextBtn = h('button', { class: 'vbtn vnext', type: 'button', 'aria-label': 'Next picture', hidden: n < 2 }, icon('fwd', 24, 2.2));
+    const count = h('div', { class: 'vcount', hidden: n < 2, 'aria-live': 'polite' });
+    const root = h('div', { class: 'viewer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Picture viewer' }, stage, closeBtn, prevBtn, nextBtn, count);
+
+    const apply = (anim) => {
+      img.style.transition = anim ? 'transform .2s ease, opacity .2s' : 'opacity .2s';
+      img.style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,0) scale(' + scale + ')';
+      img.classList.toggle('zoomed', scale > 1);
+    };
+    const clamp = () => {
+      const w = img.clientWidth * scale, hh = img.clientHeight * scale;
+      const mx = Math.max(0, (w - stage.clientWidth) / 2), my = Math.max(0, (hh - stage.clientHeight) / 2);
+      tx = Math.min(mx, Math.max(-mx, tx)); ty = Math.min(my, Math.max(-my, ty));
+      if (scale <= 1) { tx = 0; ty = 0; }
+    };
+    const zoomAt = (s2, cx, cy, anim) => {
+      s2 = Math.min(5, Math.max(1, s2));
+      const r = stage.getBoundingClientRect(), px = cx - (r.left + r.width / 2), py = cy - (r.top + r.height / 2);
+      tx = px - (px - tx) * (s2 / scale); ty = py - (py - ty) * (s2 / scale);
+      scale = s2; clamp(); apply(anim);
+    };
+    const pre = (k) => { if (n > 1) { const m = new Image(); m.decoding = 'async'; m.src = urls[(k + n) % n]; } };
+    function show(k) {
+      i = (k + n) % n; scale = 1; tx = 0; ty = 0;
+      const tk = ++loadTk;
+      img.style.opacity = '0'; fail.hidden = true; spin.hidden = false; apply(false);
+      count.textContent = (i + 1) + ' / ' + n;
+      img.alt = 'Picture ' + (i + 1) + ' of ' + n;
+      const done = (ok) => { if (tk !== loadTk) return; spin.hidden = true; if (ok) { img.style.opacity = '1'; } else { fail.hidden = false; } pre(i + 1); pre(i - 1); };
+      img.onload = () => done(true); img.onerror = () => done(false);
+      img.src = urls[i];
+      if (img.complete && img.naturalWidth) done(true);
+    }
+    function close() {
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', onResize);
+      root.remove(); document.documentElement.classList.remove('vlock');
+      if (prevFocus && prevFocus.focus) { try { prevFocus.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    }
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); }
+      else if (ev.key === 'ArrowLeft' && n > 1) { ev.preventDefault(); show(i - 1); }
+      else if (ev.key === 'ArrowRight' && n > 1) { ev.preventDefault(); show(i + 1); }
+      else if (ev.key === '+' || ev.key === '=') { const r = stage.getBoundingClientRect(); zoomAt(scale * 1.4, r.left + r.width / 2, r.top + r.height / 2, true); }
+      else if (ev.key === '-') { const r = stage.getBoundingClientRect(); zoomAt(scale / 1.4, r.left + r.width / 2, r.top + r.height / 2, true); }
+      else if (ev.key === 'Tab') {
+        const f = Array.from(root.querySelectorAll('button')).filter((b) => !b.hidden);
+        if (!f.length) return;
+        const a = document.activeElement, k = f.indexOf(a);
+        ev.preventDefault();
+        f[(k + (ev.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+      }
+    }
+    const onResize = () => { clamp(); apply(false); };
+
+    closeBtn.onclick = close;
+    prevBtn.onclick = () => show(i - 1);
+    nextBtn.onclick = () => show(i + 1);
+    stage.addEventListener('wheel', (ev) => { ev.preventDefault(); zoomAt(scale * Math.exp(-ev.deltaY * 0.0022), ev.clientX, ev.clientY, false); }, { passive: false });
+    let lastTap = { t: 0, x: 0, y: 0 };
+    stage.addEventListener('pointerdown', (ev) => {
+      if (ev.button) return;
+      downOnStage = ev.target === stage; moved = false;
+      pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      try { stage.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      if (pts.size === 2) {
+        const [a, b] = Array.from(pts.values());
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: scale }; pan = null; swipe = null;
+      } else if (pts.size === 1) {
+        if (scale > 1) pan = { x: ev.clientX, y: ev.clientY, tx, ty };
+        else swipe = { x: ev.clientX, y: ev.clientY };
+      }
+    });
+    stage.addEventListener('pointermove', (ev) => {
+      if (!pts.has(ev.pointerId)) return;
+      pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch && pts.size >= 2) {
+        const [a, b] = Array.from(pts.values());
+        const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        zoomAt(pinch.s * d / pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2, false); moved = true;
+      } else if (pan) {
+        const dx = ev.clientX - pan.x, dy = ev.clientY - pan.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        tx = pan.tx + dx; ty = pan.ty + dy; clamp(); apply(false);
+      } else if (swipe) {
+        const dx = ev.clientX - swipe.x, dy = ev.clientY - swipe.y;
+        if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+        if (dy > 0 && Math.abs(dy) > Math.abs(dx)) { img.style.transition = 'none'; img.style.transform = 'translate3d(0,' + dy + 'px,0)'; img.style.opacity = String(Math.max(.35, 1 - dy / 400)); }
+      }
+    });
+    const end = (ev) => {
+      if (!pts.has(ev.pointerId)) return;
+      const was = swipe;
+      pts.delete(ev.pointerId);
+      if (pts.size < 2) pinch = null;
+      if (pts.size === 0) {
+        pan = null; swipe = null;
+        if (was && ev.type === 'pointerup' && scale <= 1) {
+          const dx = ev.clientX - was.x, dy = ev.clientY - was.y;
+          if (dy > 100 && dy > Math.abs(dx)) { close(); return; }
+          if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) && n > 1) { show(i + (dx < 0 ? 1 : -1)); return; }
+          scale = 1; apply(true); img.style.opacity = '1';
+        }
+        if (ev.type === 'pointerup' && !moved) {
+          // two quick taps (or a double click) zoom in and out
+          const now = Date.now();
+          if (now - lastTap.t < 320 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 30) {
+            lastTap.t = 0; downOnStage = false;
+            if (scale > 1) { scale = 1; tx = 0; ty = 0; apply(true); } else zoomAt(2.6, ev.clientX, ev.clientY, true);
+            return;
+          }
+          lastTap = { t: now, x: ev.clientX, y: ev.clientY };
+        }
+        if (downOnStage && ev.target === stage && !moved && ev.type === 'pointerup') close();
+        downOnStage = false;
+      } else if (pts.size === 1 && scale > 1) {
+        const q = Array.from(pts.values())[0]; pan = { x: q.x, y: q.y, tx, ty };
+      }
+    };
+    stage.addEventListener('pointerup', end);
+    stage.addEventListener('pointercancel', end);
+    stage.addEventListener('contextmenu', (ev) => ev.preventDefault());
+
+    document.documentElement.classList.add('vlock');
+    document.body.append(root);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', onResize);
+    show(start || 0);
+    closeBtn.focus({ preventScroll: true });
+  }
+
   function postView(id) {
     const my = ++seq;
     const view = h('main', { class: 'wrap' });
@@ -593,7 +739,7 @@ export function start(store, cfg) {
         head.replaceChildren(voteCol(p, drawHead), h('div', { class: 'pmain' },
           h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), idc),
           h('h1', { class: 'ptitle', text: p.title }), p.body ? h('p', { class: 'pb' }, rich(p.body)) : null,
-          p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('a', { href: u, target: '_blank', rel: 'noopener' }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy' })))) : null,
+          p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('a', { href: u, target: '_blank', rel: 'noopener', onclick: (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return; ev.preventDefault(); openViewer(p.images, i); } }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy' })))) : null,
           h('div', { class: 'acts' }, h('span', { class: 'rc' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
       };
       const drawReplies = () => {
