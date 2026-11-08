@@ -132,9 +132,12 @@ async function verifyIdToken(env, token) {
   const now = Date.now() / 1000;
   if (!pay || pay.iss !== 'https://securetoken.google.com/' + project || pay.aud !== project) fail(401, 'bad-token');
   if (!(pay.exp > now - 30) || !(pay.iat <= now + 300) || (pay.auth_time && pay.auth_time > now + 300)) fail(401, 'bad-token');
-  if (typeof pay.sub !== 'string' || !pay.sub || pay.sub.length > 128 || typeof pay.email !== 'string' || !pay.email || pay.email_verified !== true) fail(401, 'bad-token');
-  // Only "Continue with Google" is accepted, even if another way to sign in is switched on in Firebase by mistake.
-  if (!pay.firebase || pay.firebase.sign_in_provider !== 'google.com') fail(401, 'bad-token');
+  if (typeof pay.sub !== 'string' || !pay.sub || pay.sub.length > 128 || typeof pay.email !== 'string' || !pay.email) fail(401, 'bad-token');
+  // Only "Continue with Google" and email + password are accepted, even if another way to sign in is switched on in Firebase by mistake.
+  const prov = pay.firebase && pay.firebase.sign_in_provider;
+  if (prov !== 'google.com' && prov !== 'password') fail(401, 'bad-token');
+  // An email + password account can only post after the person clicked the link in the verification email.
+  if (pay.email_verified !== true) fail(prov === 'password' ? 403 : 401, prov === 'password' ? 'email-not-verified' : 'bad-token');
   return pay;
 }
 

@@ -129,7 +129,15 @@ const MSG = {
   'bad-token': 'Sign-in could not be checked. Please try again.',
   'popup-blocked': 'The sign-in window was blocked. Allow pop-ups for this site and press the button again.',
   'unauthorized-domain': 'This address is not allowed for sign-in yet. The site owner must add it in Firebase (Authentication, Settings, Authorized domains).',
-  'sign-in-failed': 'Sign-in did not work. Please try again.'
+  'sign-in-failed': 'Sign-in did not work. Please try again.',
+  'email-not-verified': 'Please confirm your email first. Open the link we sent you, then sign in again.',
+  'wrong-credentials': 'Wrong email or password.',
+  'email-in-use': 'That email already has an account. Use Sign in, or \u201cForgot password?\u201d if you do not remember it.',
+  'weak-password': 'Use a password of 8 to 128 characters.',
+  'bad-email': 'Type a valid email address.',
+  'need-password': 'Type your password.',
+  'too-many-tries': 'Too many tries. Please wait a few minutes and try again.',
+  'email-login-off': 'Email sign-in is not switched on yet. The site owner must enable it in Firebase (Authentication, Sign-in method, Email/Password).'
 };
 const errText = (e) => MSG[e && e.code] || 'Something went wrong. Please try again.';
 
@@ -180,16 +188,102 @@ export function start(store, cfg) {
   function signInBox() {
     modal((box, close) => {
       box.parentNode.classList.add('signin');
-      const err = h('p', { class: 'merr', hidden: true });
-      const slot = h('div', { class: 'gslot' }, h('p', { class: 'mute center', text: 'Loading...' }));
+      let mode = 'in', busy = false;
+      const err = h('p', { class: 'merr', hidden: true, role: 'alert' });
+      const note = h('p', { class: 'mnote', hidden: true, role: 'status' });
+      const showErr = (e) => { note.hidden = true; err.hidden = false; err.textContent = typeof e === 'string' ? e : errText(e); };
+      const showNote = (t) => { err.hidden = true; note.hidden = false; note.textContent = t; };
+      const clear = () => { err.hidden = true; note.hidden = true; };
       const hooks = {
-        start() { freshSignIn = true; err.hidden = true; },
+        start() { freshSignIn = true; clear(); },
         cancel() { freshSignIn = false; },
-        fail(e) { freshSignIn = false; err.hidden = false; err.textContent = errText(e); }
+        fail(e) { freshSignIn = false; showErr(e); }
       };
-      box.append(h('h3', { text: 'Join the community' }),
-        h('p', { class: 'mute', text: 'Sign in to post, reply and vote. Reading is open to everyone. You choose the name others see; your email is never shown.' }),
-        slot, err,
+
+      const email = h('input', { id: 'lemail', type: 'email', autocomplete: 'email', maxlength: '200', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Email' });
+      const pw = h('input', { id: 'lpass', type: 'password', autocomplete: 'current-password', maxlength: '128', 'aria-label': 'Password' });
+      const eye = h('button', { class: 'eye', type: 'button', text: 'Show', 'aria-label': 'Show or hide the password', onclick: () => { const on = pw.type === 'password'; pw.type = on ? 'text' : 'password'; eye.textContent = on ? 'Hide' : 'Show'; } });
+      const pwRow = h('div', { class: 'pwrow' }, pw, eye);
+      const pwLabel = h('label', { class: 'fl2', for: 'lpass', text: 'Password' });
+      const hint = h('p', { class: 'fine tight', text: 'At least 8 characters.', hidden: true });
+      const go2 = h('button', { class: 'btn pri full', type: 'submit', text: 'Sign in' });
+      const forgot = h('button', { class: 'linkbtn', type: 'button', text: 'Forgot password?' });
+      const resend = h('button', { class: 'linkbtn', type: 'button', text: 'Send the verification email again', hidden: true });
+      const back = h('button', { class: 'linkbtn', type: 'button', text: 'Back to sign in', hidden: true });
+      const tabIn = h('button', { class: 'tab on', type: 'button', role: 'tab', text: 'Sign in' });
+      const tabUp = h('button', { class: 'tab', type: 'button', role: 'tab', text: 'Create account' });
+      const tabs = h('div', { class: 'tabs2', role: 'tablist' }, tabIn, tabUp);
+      const title = h('h3', { text: 'Join the community' });
+
+      function setMode(m) {
+        mode = m; clear(); resend.hidden = true;
+        const reset = m === 'reset';
+        tabs.hidden = reset;
+        tabIn.classList.toggle('on', m === 'in'); tabUp.classList.toggle('on', m === 'up');
+        tabIn.setAttribute('aria-selected', String(m === 'in')); tabUp.setAttribute('aria-selected', String(m === 'up'));
+        pwLabel.hidden = pwRow.hidden = reset;
+        hint.hidden = m !== 'up';
+        forgot.hidden = m !== 'in';
+        back.hidden = !reset;
+        pw.autocomplete = m === 'up' ? 'new-password' : 'current-password';
+        go2.textContent = m === 'up' ? 'Create account' : reset ? 'Send reset link' : 'Sign in';
+        title.textContent = reset ? 'Reset your password' : 'Join the community';
+        if (reset) showNote('Type your email and we will send you a link to choose a new password.');
+      }
+      tabIn.onclick = () => setMode('in');
+      tabUp.onclick = () => setMode('up');
+      forgot.onclick = () => setMode('reset');
+      back.onclick = () => setMode('in');
+
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      async function submit(ev) {
+        ev.preventDefault();
+        if (busy) return;
+        const em = email.value.trim(), pass = pw.value;
+        if (!EMAIL_RE.test(em)) return showErr({ code: 'bad-email' });
+        if (mode !== 'reset' && !pass) return showErr({ code: 'need-password' });
+        if (mode === 'up' && (pass.length < 8 || pass.length > 128)) return showErr({ code: 'weak-password' });
+        busy = true; go2.disabled = true; clear();
+        try {
+          if (mode === 'up') {
+            freshSignIn = false;
+            await store.signUpWithEmail(em, pass);
+            setMode('in'); pw.value = '';
+            showNote('Almost done. We sent a link to ' + em + '. Open it to confirm your email, then sign in here. Check the spam folder if you do not see it.');
+          } else if (mode === 'reset') {
+            await store.resetPassword(em);
+            showNote('If an account uses ' + em + ', a link to choose a new password is on its way. Check the spam folder too.');
+          } else {
+            freshSignIn = true;
+            await store.signInWithEmail(em, pass);
+          }
+        } catch (e) {
+          freshSignIn = false;
+          showErr(e);
+          if (e && e.code === 'email-not-verified') resend.hidden = false;
+        }
+        busy = false; go2.disabled = false;
+      }
+      resend.onclick = async () => {
+        const em = email.value.trim(), pass = pw.value;
+        if (!EMAIL_RE.test(em) || !pass) return showErr({ code: 'wrong-credentials' });
+        resend.disabled = true;
+        try { await store.resendVerification(em, pass); resend.hidden = true; showNote('Sent. Open the new link, then sign in here.'); }
+        catch (e) { showErr(e); }
+        resend.disabled = false;
+      };
+      const form = h('form', { class: 'eform', novalidate: true, onsubmit: submit },
+        h('label', { class: 'fl2', for: 'lemail', text: 'Email' }), email,
+        pwLabel, pwRow, hint,
+        h('div', { class: 'erow' }, forgot, back),
+        err, note,
+        h('div', { class: 'erow' }, resend),
+        go2);
+
+      const slot = h('div', { class: 'gslot' }, h('p', { class: 'mute center', text: 'Loading...' }));
+      box.append(title, tabs, form,
+        h('div', { class: 'or' }, h('span', { text: 'or' })),
+        slot,
         h('p', { class: 'fine' }, 'By continuing you agree to the ', h('a', { href: SITE + '/terms/', target: '_blank', rel: 'noopener', text: 'Terms' }), ' and ', h('a', { href: SITE + '/privacy/', target: '_blank', rel: 'noopener', text: 'Privacy' }), '.'));
       const gb = h('div', { class: 'gbox' });
       Promise.resolve(store.renderSignIn(gb, hooks)).then(() => slot.replaceChildren(gb), (e) => { slot.replaceChildren(); hooks.fail(e); });
@@ -416,7 +510,7 @@ export function start(store, cfg) {
   }
   function feedView() {
     const my = ++seq;
-    const goId = h('input', { type: 'text', placeholder: 'Go to post ID', maxlength: '12', 'aria-label': 'Go to post ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    const goId = h('input', { type: 'text', placeholder: 'Post ID', maxlength: '12', 'aria-label': 'Go to post ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
     const goBtn = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Go' }, icon('search', 16, 2.4));
     const jump = () => { let v = goId.value.trim().toLowerCase(); const m = v.match(/post\/([a-z0-9]+)/); v = m ? m[1] : v.replace(/^#/, ''); if (!v) return; go('/#/post/' + encodeURIComponent(v)); };
     goBtn.onclick = jump; goId.onkeydown = (e) => { if (e.key === 'Enter') jump(); };

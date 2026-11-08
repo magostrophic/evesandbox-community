@@ -4,7 +4,7 @@ The Community lives at **community.evesandbox.com**. It is a separate website fr
 
 | Part | What is used |
 |---|---|
-| Sign in | "Continue with Google" through **Firebase Authentication** (free Spark plan, no card needed) |
+| Sign in | **Email and password** (with a confirmation email and "Forgot password?") or "Continue with Google", both through **Firebase Authentication** (free Spark plan, no card needed) |
 | Text (posts, replies, votes, reports, usernames, bios, links) | **Cloudflare D1** database |
 | Pictures (on posts only, 5 MB each, up to 4 per post) and profile pictures (3 MB max) | **Cloudflare R2** bucket |
 | Profiles | A page for every member at `community.evesandbox.com/id/username` |
@@ -31,9 +31,9 @@ You do five things: make a free Firebase project for the sign-in, create the D1 
 
 ## 1. Make the Firebase project for sign-in (free, no card)
 
-Firebase is Google's own sign-in service. Here it does one job only: it shows the "Continue with Google" window and proves who the person is. Everything else (posts, pictures, profiles) stays in your Cloudflare D1 and R2. You do **not** turn on Firestore, Storage, Hosting or anything else in Firebase.
+Firebase is Google's own sign-in service. Here it does one job only: it keeps the sign-in details (the password, stored scrambled by Firebase, never readable by anyone, including you), sends the confirmation and reset emails, shows the "Continue with Google" window, and proves who the person is. The Community server never sees a password. Everything else (posts, pictures, profiles) stays in your Cloudflare D1 and R2. You do **not** turn on Firestore, Storage, Hosting or anything else in Firebase.
 
-**It costs nothing.** Stay on the free **Spark** plan and never add a billing account. Sign-in with Google has no per-login charge on Spark. If Firebase or Google ever offers to "Upgrade" (for example to *Identity Platform*), ignore it. You do not need it.
+**It costs nothing.** Stay on the free **Spark** plan and never add a billing account. Email and Google sign-in have no per-login charge on Spark. If Firebase or Google ever offers to "Upgrade" (for example to *Identity Platform*), ignore it. You do not need it.
 
 1. Go to **console.firebase.google.com** and sign in with the Google account that should own this.
 2. Click **Create a project** (or **Add project**). Name it `eve-sandbox-community`. When it asks about Google Analytics, turn it **off**. Click **Create project**, then **Continue**.
@@ -41,10 +41,35 @@ Firebase is Google's own sign-in service. Here it does one job only: it shows th
 4. Open the **Sign-in method** tab, choose **Google**, and switch **Enable** on.
    - **Public-facing name for project:** `Eve Sandbox` (this is the name people see on the Google window).
    - **Support email for project:** choose your email. Click **Save**.
+   - Then click **Add new provider** again, choose **Email/Password**, switch the first switch (**Enable**) on and leave **Email link (passwordless sign-in)** **off**. Click **Save**.
 5. Open **Authentication**, then **Settings**, then **Authorized domains**, then **Add domain**, and type `community.evesandbox.com`. (`localhost` and the `firebaseapp.com` address are already there. Leave them.)
 6. Click the **gear** next to *Project Overview*, then **Project settings**, then the **General** tab. Scroll to **Your apps** and click the web icon `</>`. Nickname: `community`. Leave *Firebase Hosting* unticked. Click **Register app**.
 7. Firebase shows a block starting with `const firebaseConfig = {`. Copy **three** values from it: `apiKey`, `projectId` and `appId`. (You do not need the others.)
 8. Open `wrangler.jsonc` in a text editor and paste them between the quotes of `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID` and `FIREBASE_APP_ID`.
+
+### 1.9 Email and password: the few extra settings
+
+Email sign-in needs no new files and no extra values. Check these once:
+
+1. **Authentication, Sign-in method:** both **Google** and **Email/Password** show *Enabled*. If Email/Password is off, the page says "Email sign-in is not switched on yet".
+2. **Authentication, Settings, User actions:** keep **Email enumeration protection** switched **on** (the default for new projects). It stops strangers from finding out which emails have accounts. Leave **Create (sign-up)** and **Delete** allowed.
+3. **Authentication, Templates:** the **Email address verification** and **Password reset** emails are what people receive.
+   - **Sender:** you already verified `community.evesandbox.com` as the sender domain, so they come from your own address (for example `noreply@community.evesandbox.com`). If you see **Verified**, nothing more to do.
+   - **Subject:** this one is editable on the free plan. Use the lines in `firebase-email-templates/subjects.txt`.
+   - **Message:** it may be locked on the free plan. That is fine, the built-in message works. The same goes for the **Action URL** (the address the link goes through): **leave it as it is.** The link opens a small Firebase page that says "Your email has been verified", and its **Continue** button returns the person to community.evesandbox.com.
+4. **Spam folder:** the first emails from a new sender sometimes land in spam. The page tells people to check it. The SPF and DKIM records you added are what keep this rare.
+
+**How it works, in short:**
+
+| Step | What happens |
+|---|---|
+| Create account | The person types an email and a password (8 to 128 characters). Firebase stores the password scrambled and emails a confirmation link. The person is **not** signed in yet. |
+| Confirm | They open the link. Firebase marks the email as verified. |
+| Sign in | The browser asks Firebase to check the password and gets a signed token. The Community server checks the token with Firebase's public keys and, **only if the email is verified**, starts its own session. Everything else (name, username, bio, posts, pictures, votes) is stored in D1 and R2 as before. |
+| Forgot password | Firebase emails a reset link. The page always answers the same way, whether or not the address has an account. |
+| Same email, two ways | An email that signs in with Google and with a password is **one** member (matched by the verified email). |
+
+**Why the password is not stored in D1:** a Cloudflare Worker on the free plan may use only 10 milliseconds of processor time per request, and properly scrambling a password takes far longer. A home-made version would either fail or use a weak method. Firebase does this safely and for free. If you would still rather keep passwords in your own D1, tell me. It needs the paid Workers plan and I would recommend against it.
 
 These three values are **not secrets**. Every visitor's browser needs them, and the server checks every sign-in itself, so nobody can pretend to be someone else with them. Never paste a *service account*, *private key* or *Web API secret* anywhere.
 
@@ -96,7 +121,7 @@ Never put this secret in GitHub or in a message to anyone.
 ## 8. Try it
 
 1. Open **https://community.evesandbox.com**. You should see the Community page. If it says "not open yet", the three `FIREBASE_` values in `wrangler.jsonc` are empty.
-2. Click **Sign in**, press **Continue with Google**, choose your account, then choose a **display name** (2 to 30 letters) and a **username** (3 to 20 letters, numbers or underscores). The username becomes your profile address.
+2. Click **Sign in**. Try **Create account** with an email and password, open the confirmation email, then sign in. (Later you can also try **Continue with Google** and **Forgot password?**.) Then choose a **display name** (2 to 30 letters) and a **username** (3 to 20 letters, numbers or underscores). The username becomes your profile address.
 3. **Start a post**, add a title, some text and a picture, press **Post**. Every post gets an 8-letter ID (for example `#k3f9x2ab`) and its own link.
 4. Reply, vote with the arrows, press **Share** (the link it copies shows a preview card in chat apps), try **Report** and **Delete**.
 5. Open the post link in a private window. It works without signing in. Voting, posting and replying ask for a sign-in.
@@ -163,7 +188,7 @@ Then run `UPDATE posts SET reply_count = (SELECT COUNT(*) FROM replies WHERE pos
 - JPEG photos are redrawn in the visitor's browser before upload, which removes hidden details like where a photo was taken. Other formats are stored as they are.
 - Limits per account (the server enforces them): one post every 30 seconds, one reply every 10 seconds, 15 posts and 30 MB of pictures per day, 200 replies per day.
 - A signed-in person can only delete their own posts and replies. Scores and reply counts are recalculated from the votes and replies, so nobody can fake them.
-- Signing in is checked by the server against Firebase's public keys (only Google accounts with a verified email are accepted), and the session is a signed, HttpOnly cookie. Firebase keeps nothing in the browser afterwards.
+- Signing in is checked by the server against Firebase's public keys (only Google accounts and email accounts with a **confirmed** email are accepted), and the session is a signed, HttpOnly cookie. Firebase keeps nothing in the browser afterwards.
 
 ## What it costs and how far it goes
 
@@ -178,6 +203,11 @@ On Cloudflare's free plans (limits as I know them; check Cloudflare's pricing pa
 | The Google window does not open | The browser blocked the pop-up. Allow pop-ups for community.evesandbox.com and press the button again. If nothing changes, delete the `Content-Security-Policy` line from `public/_headers` on GitHub and tell me. |
 | "This address is not allowed for sign-in yet" | Add `community.evesandbox.com` under Authentication, then Settings, then Authorized domains (step 1.5). |
 | "Sign-in could not be checked" | One of the three Firebase values in `wrangler.jsonc` is wrong (most often `FIREBASE_PROJECT_ID`; it must be the project's ID, not its display name), or your computer's clock is wrong. |
+| "Email sign-in is not switched on yet" | Step 1.4: add **Email/Password** under Authentication, Sign-in method, and switch it on. |
+| "Please confirm your email first" | The person has not opened the confirmation link. Use **Send the verification email again**, and check the spam folder. |
+| "Wrong email or password" | Typo, or the account was made with Google only (use **Continue with Google**, or **Forgot password?** to add a password). |
+| The confirmation email never arrives | Check the spam folder, then Authentication, Templates, that the sender shows **Verified**. Firebase also limits how many it sends per hour; wait and retry. |
+| "Too many tries" | Firebase paused that device for a few minutes. Wait and try again. |
 | Google says the sign-in is disabled | Step 1.4: Google must be switched **Enable** in Authentication, Sign-in method. |
 | Build fails in Cloudflare | The project name must be exactly `evesandbox-community`; `wrangler.jsonc` must be in the repo's top folder; the D1 ID and bucket name must exist. |
 | Posts fail with a server error | D1 tables missing: run `schema.sql` again in the D1 Console (step 3.4). |
@@ -186,9 +216,9 @@ On Cloudflare's free plans (limits as I know them; check Cloudflare's pricing pa
 
 ## Honest limits
 
-- **Tested here:** the whole Community running on Cloudflare's own local test engine (the same server runtime, a local D1 database and a local R2 bucket), with a stand-in for Firebase that signs sign-in tokens in Firebase's format. 206 checks on the server (forged and expired tokens, wrong Client ID, cheating attempts, the 5 MB and 3 MB limits to the byte, fake and SVG pictures, deleting a post removes its replies, votes and pictures, usernames, links, private liked posts, profile pages) and 103 checks in a real browser (sign-in, posting with pictures, voting, replies, sharing, admin delete, profile pages and editing, phone layout).
-- **Not tested here:** the real Firebase sign-in window and Google screens (my workspace cannot reach Firebase), the real D1 and R2 services, and the actual Cloudflare deployment. I could not reach them from my workspace. Your first sign-in and first post are the real test. If something fails, send me the exact message.
+- **Tested here:** the whole Community running on Cloudflare's own local test engine (the same server runtime, a local D1 database and a local R2 bucket), with a stand-in for Firebase that signs sign-in tokens in Firebase's format. 206 checks on the server (forged and expired tokens, wrong project, unconfirmed emails, other sign-in kinds refused, cheating attempts, the 5 MB and 3 MB limits to the byte, fake and SVG pictures, deleting a post removes its replies, votes and pictures, usernames, links, private liked posts, profile pages) 103 checks in a real browser (sign-in, posting with pictures, voting, replies, sharing, admin delete, profile pages and editing, phone layout), and 53 more checks of the email sign-in (create account, confirmation notice, resend, wrong password, offline, forgot password, same email by Google and by password, phone and dark layout, with the page security rules switched on).
+- **Not tested here:** the real Firebase sign-in window, Google screens and the real confirmation and reset emails (my workspace cannot reach Firebase or send email), the real D1 and R2 services, and the actual Cloudflare deployment. I could not reach them from my workspace. Your first sign-in and first post are the real test. If something fails, send me the exact message.
 - **Moderation is manual:** nobody reviews posts or pictures before they appear, and pictures are not scanned. You are responsible for what is posted, so read the reports and use delete and ban.
-- **Spam:** only Google accounts can post and the limits above apply per account, but one person can make several Google accounts.
+- **Spam:** every account needs a confirmed email and the limits above apply per account, but one person can make several email addresses.
 - **Search engines:** share links (`/p/...`) and profile pages (`/id/...`) tell search engines not to list them; the Community itself is a single page and is not indexed post by post.
 - **Profile pictures are not scanned** and are cropped automatically (no manual crop screen). Animated GIFs are not accepted as profile pictures.

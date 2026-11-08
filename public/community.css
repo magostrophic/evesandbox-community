@@ -39,8 +39,8 @@ a{color:var(--brand)}
 .btn:disabled{opacity:.55;cursor:default}
 .btn:focus-visible,.vb:focus-visible,.lnk:focus-visible,.tab:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .more{margin-top:14px}
-input[type=text],textarea{width:100%;border:.5px solid var(--line);background:var(--bg);border-radius:12px;padding:11px 13px;outline:none;resize:vertical}
-input[type=text]:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 22%,transparent)}
+input[type=text],input[type=email],input[type=password],textarea{width:100%;border:.5px solid var(--line);background:var(--bg);border-radius:12px;padding:11px 13px;outline:none;resize:vertical}
+input[type=text]:focus,input[type=email]:focus,input[type=password]:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 22%,transparent)}
 textarea{margin-top:8px;min-height:80px}
 .comp .cstart{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;color:var(--mute);padding:6px 2px;cursor:pointer;text-align:left}
 .crow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap;font-size:.85rem}
@@ -80,7 +80,7 @@ textarea{margin-top:8px;min-height:80px}
 .mback{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:20}
 .mbox{background:var(--card);border-radius:20px;padding:20px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .mbox h3{margin:0 0 6px;font-size:1.25rem}.mbox p{margin:0 0 12px}
-.mbox input[type=text]{margin-top:2px}
+.mbox input[type=text],.mbox input[type=email],.mbox input[type=password]{margin-top:2px}
 .fine{font-size:.78rem;color:var(--mute);margin:12px 0 0!important}
 .gbtn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;border:.5px solid var(--line);background:#fff;color:#1f1f1f;border-radius:12px;padding:11px;font-weight:600;cursor:pointer}
 .gbtn:disabled{opacity:.6}
@@ -134,3 +134,25 @@ img,a,button{-webkit-user-drag:none}
 .bar{align-items:center}
 .gid{margin-left:auto}
 .empty{margin-top:16px}
+
+/* email + password sign-in */
+.tabs2{display:flex;gap:4px;background:var(--bg);border:.5px solid var(--line);border-radius:12px;padding:3px;margin:12px 0 4px}
+.tabs2[hidden]{display:none}
+.tab{flex:1;border:0;background:transparent;color:var(--mute);font:inherit;font-weight:600;padding:8px 6px;border-radius:9px;cursor:pointer}
+.tab.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.eform{margin:0}
+.pwrow{position:relative}
+.pwrow input{padding-right:64px}
+.eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--brand);font:inherit;font-size:.84rem;font-weight:600;padding:6px 8px;cursor:pointer}
+.erow{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
+.erow:empty{display:none}
+.linkbtn{border:0;background:transparent;color:var(--brand);font:inherit;font-size:.86rem;padding:2px 0;cursor:pointer;text-align:left}
+.linkbtn[hidden],.fine[hidden],.mnote[hidden],.eform [hidden],label[hidden],.pwrow[hidden]{display:none}
+.linkbtn:hover{text-decoration:underline}
+.fine.tight{margin:6px 0 0!important}
+.mnote{font-size:.9rem;margin:10px 0 0!important;padding:9px 11px;border-radius:10px;background:color-mix(in srgb,var(--brand) 10%,transparent)}
+.btn.full{width:100%;margin-top:12px}
+.or{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:.84rem;margin:14px 0 0}
+.or:before,.or:after{content:"";flex:1;height:.5px;background:var(--line)}
+.mbox .gslot{margin-top:10px}
+.mbox .gbox{width:100%}
