@@ -14,6 +14,7 @@ const ICONS = {
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  page: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'
 };
 function icon(n, s = 18, w = 2) {
@@ -163,7 +164,12 @@ export function start(store, cfg) {
     const close = () => { back.remove(); document.removeEventListener('keydown', esc); };
     const esc = (ev) => { if (ev.key === 'Escape') close(); };
     const box = h('div', { class: 'mbox', role: 'dialog', 'aria-modal': 'true' });
-    const back = h('div', { class: 'mback', onclick: (ev) => { if (ev.target === back) close(); } }, box);
+    // Close only when the press started AND ended on the dark area. Dragging a selection out of the box must not close it.
+    let downOnBack = false, upOnBack = false;
+    const back = h('div', { class: 'mback' }, box);
+    back.addEventListener('pointerdown', (ev) => { downOnBack = ev.target === back; upOnBack = false; });
+    back.addEventListener('pointerup', (ev) => { upOnBack = ev.target === back; });
+    back.addEventListener('click', (ev) => { const ok = downOnBack && upOnBack && ev.target === back; downOnBack = upOnBack = false; if (ok) close(); });
     build(box, close);
     document.body.append(back);
     document.addEventListener('keydown', esc);
@@ -518,10 +524,12 @@ export function start(store, cfg) {
     const list = h('div', { class: 'plist' });
     const more = h('button', { class: 'btn more', type: 'button', text: 'Load more' });
     const status = h('div', { class: 'mute center' });
+    const empty = h('div', { class: 'nopost', hidden: true }, icon('page', 64, 1.3), h('h2', { text: 'No posts yet' }), h('p', { class: 'mute', text: 'Be the first to start one!' }));
     const draw = () => {
       list.replaceChildren(...feed.posts.map(postCard));
       more.hidden = feed.done || !feed.posts.length;
-      status.textContent = feed.loading ? 'Loading...' : (!feed.posts.length && feed.done ? 'No posts yet. Be the first to start one!' : '');
+      status.textContent = feed.loading ? 'Loading...' : '';
+      empty.hidden = !(!feed.loading && !feed.posts.length && feed.done);
     };
     async function load(reset) {
       if (feed.loading && !reset) return;
@@ -543,7 +551,7 @@ export function start(store, cfg) {
       h('div', { class: 'hd' }, h('h1', { text: 'Community' }), h('p', { class: 'mute', text: 'Ask questions, share what you know and help other students.' })),
       postComposer(),
       h('div', { class: 'bar' }, h('div', { class: 'tabs' }, tab('new', 'New'), tab('top', 'Top')), h('div', { class: 'gid' }, goId, goBtn)),
-      list, status, h('div', { class: 'center' }, more));
+      list, status, empty, h('div', { class: 'center' }, more));
     if (feed.posts.length && feed.sortLoaded === feed.sort) { draw(); } else { feed.sortLoaded = feed.sort; load(true); }
     return view;
   }
@@ -809,6 +817,34 @@ export function start(store, cfg) {
     let u; try { u = new URL(a.href, location.href); } catch (e) { return; }
     if (u.origin !== location.origin || !(u.pathname === '/' || u.pathname.indexOf('/id/') === 0)) return;
     ev.preventDefault(); go(u.pathname + u.search + u.hash);
+  });
+
+  // ---------- logo and loading screen ----------
+  // The logo is tried from this site first, then from the main site, and retried, so a slow or failed request no longer leaves the corner empty.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tryImg = (u) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = u; });
+  async function loadLogo() {
+    const list = ['/evesandbox.png', SITE + '/evesandbox.png'];
+    for (let round = 0; round < 4; round++) {
+      for (const base of list) {
+        const u = round ? base + '?r=' + round : base;
+        if (await tryImg(u)) {
+          document.documentElement.style.setProperty('--logo', 'url("' + u + '")');
+          document.documentElement.classList.add('logo-ok');
+          return true;
+        }
+      }
+      await wait(600 * (round + 1));
+    }
+    return false;
+  }
+  const logoP = loadLogo();
+  const fontsP = (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => {}) : Promise.resolve();
+  Promise.all([wait(750), Promise.race([logoP, wait(2600)]), Promise.race([fontsP, wait(2600)])]).then(() => {
+    const sp = document.getElementById('splash');
+    if (!sp) return;
+    sp.classList.add('out');
+    setTimeout(() => sp.remove(), 700);
   });
 
   // ---------- go ----------

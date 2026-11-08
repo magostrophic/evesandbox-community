@@ -20,7 +20,7 @@ You do five things: make a free Firebase project for the sign-in, create the D1 
 
 | Path | What it is |
 |---|---|
-| `public/` | The website itself (page, style, fonts). Visitors get this. |
+| `public/` | The website itself (page, style, fonts). Visitors get this. For the most reliable logo, also put your `evesandbox.png` (the same file the main site uses) in this folder. The page uses it first and falls back to the main site's copy. |
 | `worker/index.js` | The server code: sign-in check, posts, replies, votes, pictures, profiles. |
 | `schema.sql` | The database tables. You paste it into D1 once (step 3). |
 | `migration-profiles.sql` | Only for a database you created **before** profiles existed (see step 3). |

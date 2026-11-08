@@ -17,7 +17,7 @@ a{color:var(--brand)}
 .top-in{max-width:720px;margin:auto;min-height:54px;display:flex;align-items:center;gap:10px;padding:6px 16px}
 .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:1.05rem;color:var(--ink);text-decoration:none;letter-spacing:-.02em}
 .logo .lt>span{color:var(--brand)}
-.lm{display:block;width:30px;height:30px;border-radius:8px;background:url(https://evesandbox.com/evesandbox.png) center/contain no-repeat;pointer-events:none;-webkit-user-drag:none;user-select:none}
+.lm{display:block;flex:none;width:30px;height:30px;border-radius:8px;background-image:var(--logo,none);background-position:center;background-size:contain;background-repeat:no-repeat;opacity:0;transition:opacity .3s;pointer-events:none;-webkit-user-drag:none;user-select:none}.logo-ok .lm{opacity:1}
 .tag{font-weight:600;font-size:.9rem;text-decoration:none;color:var(--mute);padding:3px 10px;border-radius:99px;background:var(--fill)}
 .hr{margin-left:auto;position:relative;display:flex;align-items:center}
 .ub{border:0;background:none;padding:0;cursor:pointer;border-radius:50%;display:flex}
@@ -156,3 +156,32 @@ img,a,button{-webkit-user-drag:none}
 .or:before,.or:after{content:"";flex:1;height:.5px;background:var(--line)}
 .mbox .gslot{margin-top:10px}
 .mbox .gbox{width:100%}
+
+/* empty feed */
+.nopost{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;min-height:max(240px,calc(100svh - 480px));color:var(--mute)}
+.nopost[hidden]{display:none}
+.nopost h2{margin:8px 0 0;font-size:1.15rem;color:var(--ink)}
+.nopost p{margin:0}
+.nopost .ic{display:block}
+
+/* loading screen (same look as the main site's hero) */
+#splash{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;overflow:hidden;isolation:isolate;background:linear-gradient(120deg,#0b1a5e,#3a0ca3 45%,#7209b7 70%,#0b2a6e);color:#fff;opacity:1;visibility:visible;animation:spfs .01s 9s forwards}
+#splash.out{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .5s ease,visibility 0s .5s}
+#splash .sb{position:absolute;border-radius:50%;z-index:-1;pointer-events:none;will-change:transform}
+#splash .b1{width:60vmax;height:60vmax;background:radial-gradient(closest-side,rgba(10,132,255,.8),rgba(10,132,255,0));top:-22vmax;left:-18vmax;animation:fa 9s ease-in-out infinite alternate}
+#splash .b2{width:52vmax;height:52vmax;background:radial-gradient(closest-side,rgba(191,90,242,.75),rgba(191,90,242,0));right:-18vmax;top:2vmax;animation:fb 11s ease-in-out infinite alternate}
+#splash .b3{width:46vmax;height:46vmax;background:radial-gradient(closest-side,rgba(255,55,95,.6),rgba(255,55,95,0));left:18vmax;bottom:-24vmax;animation:fc 13s ease-in-out infinite alternate}
+#splash .sc{display:flex;flex-direction:column;align-items:center;gap:14px}
+#splash .sl{width:76px;height:76px;border-radius:20px;background-image:var(--logo,none);box-shadow:0 10px 40px rgba(0,0,0,.35);animation:spb 1.8s ease-in-out infinite}
+#splash .sn{font-weight:800;font-size:1.5rem;letter-spacing:-.02em}
+#splash .sn span{color:#8ec5ff}
+#splash .sd{display:flex;gap:7px;margin-top:6px}
+#splash .sd i{width:10px;height:10px;border-radius:50%;background:#fff;animation:dpl 1.1s infinite ease-in-out}
+#splash .sd i:nth-child(2){animation-delay:.18s}#splash .sd i:nth-child(3){animation-delay:.36s}
+@keyframes fa{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(14vmax,10vmax,0) scale(1.18)}}
+@keyframes fb{0%{transform:translate3d(0,0,0) scale(1.1)}100%{transform:translate3d(-16vmax,12vmax,0) scale(.9)}}
+@keyframes fc{0%{transform:translate3d(0,0,0) scale(.95)}100%{transform:translate3d(-12vmax,-14vmax,0) scale(1.2)}}
+@keyframes dpl{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1.1)}}
+@keyframes spb{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+@keyframes spfs{to{opacity:0;visibility:hidden;pointer-events:none}}
+@media (prefers-reduced-motion:reduce){#splash .sb,#splash .sl,#splash .sd i{animation:none}}
