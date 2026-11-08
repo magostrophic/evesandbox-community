@@ -826,21 +826,24 @@ export function start(store, cfg) {
   async function loadLogo() {
     const list = ['/evesandbox.png', SITE + '/evesandbox.png'];
     for (let round = 0; round < 4; round++) {
-      for (const base of list) {
-        const u = round ? base + '?r=' + round : base;
-        if (await tryImg(u)) {
-          document.documentElement.style.setProperty('--logo', 'url("' + u + '")');
-          document.documentElement.classList.add('logo-ok');
-          return true;
-        }
+      // Both addresses are tried at the same time; whichever answers first is used.
+      const urls = list.map((base) => (round ? base + '?r=' + round : base));
+      const got = await new Promise((res) => {
+        let left = urls.length;
+        urls.forEach((u) => tryImg(u).then((ok) => { if (ok) res(u); else if (--left === 0) res(null); }));
+      });
+      if (got) {
+        document.documentElement.style.setProperty('--logo', 'url("' + got + '")');
+        document.documentElement.classList.add('logo-ok');
+        return true;
       }
-      await wait(600 * (round + 1));
+      await wait(500 * (round + 1));
     }
     return false;
   }
   const logoP = loadLogo();
   const fontsP = (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => {}) : Promise.resolve();
-  Promise.all([wait(750), Promise.race([logoP, wait(2600)]), Promise.race([fontsP, wait(2600)])]).then(() => {
+  Promise.all([wait(750), Promise.race([logoP.then((ok) => (ok ? wait(450) : 0)), wait(4500)]), Promise.race([fontsP, wait(2600)])]).then(() => {
     const sp = document.getElementById('splash');
     if (!sp) return;
     sp.classList.add('out');
