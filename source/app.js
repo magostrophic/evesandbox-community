@@ -15,7 +15,8 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
   page: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'
+  plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'
 };
 function icon(n, s = 18, w = 2) {
   const e = document.createElement('span');
@@ -977,7 +978,13 @@ export function start(store, cfg) {
     });
   }
 
-  const EMPTY = { posts: 'No posts yet.', replies: 'No replies yet.', liked: 'No liked posts yet.' };
+  // What a profile tab shows when it has nothing: a picture that fits the tab, a title and one line, all centred in the free space.
+  const EMPTY = {
+    posts: { ic: 'page', t: 'No posts yet', own: 'Posts you write will show up here.', other: (n) => n + ' has not posted anything yet.' },
+    replies: { ic: 'chat', t: 'No replies yet', own: 'Replies you write will show up here.', other: (n) => n + ' has not replied to anything yet.' },
+    liked: { ic: 'heart', t: 'No liked posts yet', own: 'Posts you like will show up here.', other: (n) => n + ' has not liked any posts yet.' }
+  };
+  const emptyBox = (ic, title, line) => h('div', { class: 'nopost pe' }, icon(ic, 56, 1.3), h('h2', { text: title }), h('p', { class: 'mute', text: line }));
   function profReply(r) {
     return h('div', { class: 'reply' },
       h('div', { class: 'meta' }, h('span', { text: 'Replied to' }), h('a', { class: 'unl', href: '/p/' + r.postId, text: r.postTitle || 'a post' }), h('span', { text: '·' }), h('span', { text: ago(r.createdAt), title: full(r.createdAt) })),
@@ -985,8 +992,8 @@ export function start(store, cfg) {
   }
   function profileView(uname, tab) {
     const my = ++seq;
-    const view = h('main', { class: 'wrap' });
-    const holder = h('div', {}, h('div', { class: 'card empty mute', text: 'Loading...' }));
+    const view = h('main', { class: 'wrap pv' });
+    const holder = h('div', { class: 'pvh' }, h('div', { class: 'card empty mute', text: 'Loading...' }));
     view.append(backLink(), holder);
     store.getProfile(uname).then((pf) => {
       if (my !== seq) return;
@@ -1009,9 +1016,11 @@ export function start(store, cfg) {
       const list = h('div', { class: 'plist' }), more = h('button', { class: 'btn more', type: 'button', text: 'Load more' }), stat = h('p', { class: 'mute center' });
       let items = [], cursor = null, done = false, loading = false, hidden = false;
       const drawList = () => {
-        if (hidden) { list.replaceChildren(h('div', { class: 'card empty' }, icon('lock', 22, 2), h('p', { class: 'mute', text: pf.name + ' keeps liked posts private.' }))); more.hidden = true; stat.textContent = ''; return; }
-        list.replaceChildren(...items.map(tab === 'replies' ? profReply : postCard));
-        more.hidden = done; stat.textContent = loading ? 'Loading...' : (!items.length && done ? EMPTY[tab] : '');
+        if (hidden) { list.classList.add('isempty'); list.replaceChildren(emptyBox('lock', 'Liked posts are private', pf.name + ' keeps liked posts private.')); more.hidden = true; stat.textContent = ''; return; }
+        const none = !items.length && done && !loading, E = EMPTY[tab];
+        list.classList.toggle('isempty', none);
+        list.replaceChildren(...(none ? [emptyBox(E.ic, E.t, isMe() ? E.own : E.other(pf.name))] : items.map(tab === 'replies' ? profReply : postCard)));
+        more.hidden = done; stat.textContent = loading ? 'Loading...' : '';
       };
       async function loadMore() {
         if (loading) return; loading = true; drawList();

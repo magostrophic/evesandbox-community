@@ -163,6 +163,13 @@ img,a,button{-webkit-user-drag:none}
 .nopost h2{margin:8px 0 0;font-size:1.15rem;color:var(--ink)}
 .nopost p{margin:0}
 .nopost .ic{display:block}
+.nopost.pe{min-height:230px;padding:8px 0 22px}
+/* profile page: the empty box fills the free space under the tabs, so its icon and text sit in the middle of it */
+#app{display:flex;flex-direction:column}
+#app>.wrap{width:100%}
+#app>.wrap.pv,.pv>.pvh,.pv .plist.isempty{flex:1;display:flex;flex-direction:column}
+.pv .plist.isempty>.nopost.pe{flex:1}
+.wrap p.mute.center:empty{display:none}
 
 /* loading screen (same look as the main site's hero) */
 #splash{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;overflow:hidden;isolation:isolate;background:linear-gradient(120deg,#0b1a5e,#3a0ca3 45%,#7209b7 70%,#0b2a6e);color:#fff;opacity:1;visibility:visible;animation:spfs .01s 9s forwards}

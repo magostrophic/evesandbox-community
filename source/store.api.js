@@ -10,7 +10,7 @@ export function createStore(fbConfig) {
   let user = null, listeners = [], auth = null;
   const tell = () => listeners.forEach((f) => f(user));
 
-  async function call(method, path, body, form) {
+  async function once(method, path, body, form) {
     let r;
     try {
       r = await fetch(path, {
@@ -25,9 +25,22 @@ export function createStore(fbConfig) {
       const code = (j && j.error) || (r.status >= 500 ? 'server' : 'bad-request');
       if (code === 'sign-in' && user) { user = null; tell(); }
       const e = err(code); e.status = r.status; e.path = path; if (j && j.ref) e.ref = j.ref;
+      if (!j) e.plain = true;   // the answer was not ours (an error page from the network), so trying again may well work
       throw e;
     }
     return j;
+  }
+  // Reading is retried (up to 3 tries, a short pause between) when the failure looks temporary; changes (posting, voting...) are never repeated.
+  async function call(method, path, body, form, once1) {
+    const tries = method === 'GET' && !once1 ? 3 : 1;
+    for (let i = 1; ; i++) {
+      try { return await once(method, path, body, form); }
+      catch (e) {
+        const temporary = e.code === 'unavailable' || e.code === 'server' || e.status >= 500 || e.plain;
+        if (i >= tries || !temporary) throw e;
+        await new Promise((res) => setTimeout(res, 350 * i));
+      }
+    }
   }
 
   const imgs = (p) => Array.from({ length: p.images || 0 }, (_, i) => '/img/' + p.id + '/' + i);
@@ -66,7 +79,16 @@ export function createStore(fbConfig) {
   return {
     onAuth(cb) {
       listeners.push(cb);
-      call('GET', '/api/me').then((r) => { user = r.user; cb(user); }, () => { user = null; cb({ error: err('unavailable') }); });
+      // Who is signed in is asked right away. If the server does not answer, the page says so once and keeps asking quietly
+      // (after 3, 7, 15 and 30 seconds), so a short hiccup after a reload does not leave a signed-in person looking signed out.
+      let failed = 0;
+      const ask = () => call('GET', '/api/me').then((r) => { user = r.user; cb(user); }, () => {
+        user = null;
+        if (failed === 0) cb({ error: err('unavailable') });
+        if (failed < 4) setTimeout(ask, [3000, 7000, 15000, 30000][failed]);
+        failed++;
+      });
+      ask();
     },
     // Puts the "Continue with Google" button into the element el.
     renderSignIn(el, hooks) {
@@ -156,7 +178,7 @@ export function createStore(fbConfig) {
     },
     async getMyVotes(uid, ids) { return (await call('GET', '/api/votes?ids=' + ids.join(','))).votes || {}; },
     async vote(uid, id, v) { const r = await call('PUT', '/api/posts/' + id + '/vote', { value: v }); return r && typeof r.score === 'number' ? r.score : null; },
-    async getScores(ids, since) { return call('GET', '/api/scores?ids=' + ids.join(',') + (since === null || since === undefined ? '' : '&since=' + since)); },
+    async getScores(ids, since) { return call('GET', '/api/scores?ids=' + ids.join(',') + (since === null || since === undefined ? '' : '&since=' + since), undefined, false, true); },
     async createPost(uid, name, title, body, files) {
       const f = new FormData();
       f.append('title', title); f.append('body', body);

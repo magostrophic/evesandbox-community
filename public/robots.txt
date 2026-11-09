@@ -1,5 +1,3 @@
 User-agent: *
 Allow: /
 Disallow: /api/
-Disallow: /img/
-Disallow: /p/

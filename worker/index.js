@@ -148,11 +148,64 @@ const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS 
 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
+// ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
+const BUILD = '2026-11-09c';
+async function ping(env, url) {
+  const checks = {};
+  const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
+  checks.secret = env.SESSION_SECRET && String(env.SESSION_SECRET).length >= 32 ? 'ok' : 'missing';
+  checks.firebase = env.FIREBASE_PROJECT_ID && env.FIREBASE_API_KEY && env.FIREBASE_APP_ID ? 'ok' : 'missing';
+  await probe('users table', async () => { await env.DB.prepare('SELECT id, google_sub, email, name, username, uname_at, bio, links, avatar, show_likes, banned, is_admin, created FROM users LIMIT 1').first(); return true; });
+  await probe('posts table', async () => { await env.DB.prepare('SELECT id, author_id, title, body, score, reply_count, img_count, img_bytes, created FROM posts LIMIT 1').first(); return true; });
+  await probe('replies table', async () => { await env.DB.prepare('SELECT id, post_id, author_id, body, created FROM replies LIMIT 1').first(); return true; });
+  await probe('votes table', async () => { await env.DB.prepare('SELECT post_id, user_id, value, at FROM votes LIMIT 1').first(); return true; });
+  await probe('pictures', async () => !!env.IMAGES && typeof env.IMAGES.get === 'function');
+  await probe('pages', async () => { const r = await env.ASSETS.fetch(new Request(url.origin + '/')); const t = await r.text(); return r.ok && t.indexOf('id="app"') > -1; });
+  // The preview card must come out with exactly one title, picture and card type, whatever index.html looks like.
+  await probe('link previews', async () => {
+    const r = await env.ASSETS.fetch(new Request(url.origin + '/'));
+    const t = withCard(await r.text(), { title: 'T', desc: 'D', url: url.origin + '/', image: url.origin + '/x.png' });
+    const n = (re) => (t.match(re) || []).length;
+    return n(/<title>/g) === 1 && n(/property="og:title"/g) === 1 && n(/property="og:image"/g) === 1 && n(/name="twitter:card"/g) === 1;
+  });
+  checks.logo = (await logoUrl(env, url.origin)).indexOf(url.origin) === 0 ? 'this site' : 'main site';
+  const ok = Object.keys(checks).every((k) => checks[k] === 'ok' || k === 'logo');
+  // /api/ping?post=<post id> shows what a chat app reads for that post (nothing here is private: it is the post's public title, text and picture).
+  const want = url.searchParams.get('post');
+  let preview;
+  if (want && /^[a-z0-9]{8}$/.test(want)) {
+    const { row: p, ok: dbok } = await cardRow(env, POST_CARD_SQL, want);
+    if (!dbok) preview = { found: 'database problem' };
+    else if (!p) preview = { found: false };
+    else {
+      const c = await postCard(env, url.origin, p);
+      preview = { found: true, address: c.url, title: c.title, description: c.desc, picture: c.image, card: c.big ? 'large picture card' : 'small card with the logo' };
+      if (p.img_count > 0) {
+        try { const o = await env.IMAGES.head(p.id + '/0'); preview.pictureStored = !!o; if (o) { preview.pictureKB = Math.round(o.size / 1024); preview.pictureType = (o.httpMetadata && o.httpMetadata.contentType) || 'none'; } }
+        catch (e) { preview.pictureStored = 'problem'; }
+      }
+    }
+  }
+  return json(preview ? { ok, build: BUILD, checks, preview } : { ok, build: BUILD, checks });
+}
+
+// A read can fail for a moment on the database side (a restart, a dropped connection). Reads change nothing, so one more try is safe.
+async function retryRead(req, f) {
+  try { return await f(); }
+  catch (e) {
+    if (e instanceof HttpErr || (req.method !== 'GET' && req.method !== 'HEAD')) throw e;
+    console.error('retrying a read after', e && e.message ? e.message : e);
+    await new Promise((r) => setTimeout(r, 120));
+    return await f();
+  }
+}
+
 // ---------- API ----------
 async function api(req, env, url) {
   const path = url.pathname, method = req.method;
   let m;
   if (method !== 'GET' && method !== 'HEAD') sameOrigin(req, url);
+  if (path === '/api/ping' && method === 'GET') return ping(env, url);
 
   if (path === '/api/config' && method === 'GET') {
     const ok = env.FIREBASE_PROJECT_ID && env.FIREBASE_API_KEY && env.FIREBASE_APP_ID;
@@ -558,27 +611,63 @@ async function appPage(req, env, url) {
 }
 const descOf = (t, fallback) => ((t || '').replace(/\s+/g, ' ').trim() || fallback).slice(0, 200);
 // Puts a page's own title, text and picture into the preview card that chat apps and search show.
+// It does not depend on the exact wording of index.html: every old title / description / og: / twitter: / canonical tag is
+// removed and one fresh set goes in right after <meta charset>, so the card is right even if index.html is an older or edited copy.
 function withCard(html, c) {
-  const swap = (a, b) => { html = html.replace(a, () => b); };
-  const title = esc(c.title), desc = esc(c.desc), url = esc(c.url), img = esc(c.image);
-  swap('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="robots" content="noindex">');
-  swap('<meta name="twitter:card" content="summary">\n', '');
-  swap('<title>Eve Sandbox - Community</title>', '<title>' + title + '</title>');
-  swap('<meta property="og:type" content="website">', '<meta property="og:type" content="' + (c.type || 'website') + '">');
-  swap('<meta property="og:title" content="Eve Sandbox - Community">', '<meta property="og:title" content="' + title + '">');
-  swap('<meta property="og:description" content="Ask questions, share what you know and help other students.">', '<meta property="og:description" content="' + desc + '">');
-  swap('<meta name="description" content="The Eve Sandbox community: ask questions, share what you know and help other students.">', '<meta name="description" content="' + desc + '">');
-  swap('<meta property="og:url" content="https://community.evesandbox.com/">', '<meta property="og:url" content="' + url + '">');
-  swap('<link rel="canonical" href="https://community.evesandbox.com/">', '<link rel="canonical" href="' + url + '">');
-  swap('<meta property="og:image" content="https://evesandbox.com/evesandbox.png">',
-    '<meta property="og:image" content="' + img + '"><meta property="og:image:alt" content="' + esc(c.imageAlt || c.title) + '">' +
-    '<meta name="twitter:card" content="' + (c.big ? 'summary_large_image' : 'summary') + '"><meta name="twitter:title" content="' + title + '">' +
-    '<meta name="twitter:description" content="' + desc + '"><meta name="twitter:image" content="' + img + '">');
-  return html;
+  const title = esc(c.title), desc = esc(c.desc), url = esc(c.url), img = esc(c.image), alt = esc(c.imageAlt || c.title);
+  html = html
+    .replace(/<title[^>]*>[\s\S]*?<\/title>\s*/gi, '')
+    .replace(/<meta\s+(?:name|property)\s*=\s*["'](?:description|robots|og:[^"']*|twitter:[^"']*)["'][^>]*>\s*/gi, '')
+    .replace(/<link\s+rel\s*=\s*["']canonical["'][^>]*>\s*/gi, '');
+  const tags =
+    '<title>' + title + '</title>' +
+    '<meta name="description" content="' + desc + '">' +
+    '<meta name="robots" content="noindex">' +
+    '<link rel="canonical" href="' + url + '">' +
+    '<meta property="og:site_name" content="Eve Sandbox">' +
+    '<meta property="og:type" content="' + (c.type || 'website') + '">' +
+    '<meta property="og:title" content="' + title + '">' +
+    '<meta property="og:description" content="' + desc + '">' +
+    '<meta property="og:url" content="' + url + '">' +
+    '<meta property="og:image" content="' + img + '">' +
+    '<meta property="og:image:alt" content="' + alt + '">' +
+    '<meta name="twitter:card" content="' + (c.big ? 'summary_large_image' : 'summary') + '">' +
+    '<meta name="twitter:title" content="' + title + '">' +
+    '<meta name="twitter:description" content="' + desc + '">' +
+    '<meta name="twitter:image" content="' + img + '">' +
+    '<meta name="twitter:image:alt" content="' + alt + '">';
+  if (/<meta\s+charset[^>]*>/i.test(html)) return html.replace(/<meta\s+charset[^>]*>/i, (m) => m + tags);
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + '<meta charset="utf-8">' + tags);
+  return '<meta charset="utf-8">' + tags + html;
+}
+
+// The picture chat apps show when a post or profile has none of its own: this site's copy of the logo if it is there, otherwise the main site's.
+const logoMemo = {};
+async function logoUrl(env, origin) {
+  const m = logoMemo[origin];
+  if (m && Date.now() - m.at < 600e3) return m.url;
+  let u = 'https://evesandbox.com/evesandbox.png';
+  try {
+    const r = await env.ASSETS.fetch(new Request(origin + '/evesandbox.png', { method: 'GET' }));
+    if (r.ok && /^image\//i.test(r.headers.get('content-type') || '')) u = origin + '/evesandbox.png';
+    if (r.body) r.body.cancel();
+  } catch (e) { /* keep the main site's logo */ }
+  logoMemo[origin] = { at: Date.now(), url: u };
+  return u;
 }
 function pageResponse(req, base, html, status) {
   const h = new Headers(base.headers); h.delete('content-length'); h.delete('etag'); h.delete('last-modified'); h.set('cache-control', 'no-cache');
   return new Response(req.method === 'HEAD' ? null : html, { status: status || 200, headers: h });
+}
+
+// One look-up for a page card. A database hiccup must never stop the page itself from opening, so it is tried twice and,
+// if it still fails, the visitor gets the normal page (the app then loads its own data, with its own retries) and the failure goes to the log.
+async function cardRow(env, sql, bind) {
+  for (let i = 0; i < 2; i++) {
+    try { return { row: await env.DB.prepare(sql).bind(bind).first(), ok: true }; }
+    catch (e) { console.error('card look-up failed (try ' + (i + 1) + ')', e && e.message ? e.message : e); if (i === 0) await new Promise((r) => setTimeout(r, 120)); }
+  }
+  return { row: null, ok: false };
 }
 
 // /id/<username>: the same page for everyone, with the right title and preview card for chat apps.
@@ -587,17 +676,17 @@ async function profilePage(req, env, url) {
   if (!m) return env.ASSETS.fetch(req);
   const base = await appPage(req, env, url);
   if (!base.ok) return base;
-  const row = await env.DB.prepare('SELECT id, username, name, bio, avatar FROM users WHERE username = ?').bind(m[1].toLowerCase()).first();
+  const { row } = await cardRow(env, 'SELECT id, username, name, bio, avatar FROM users WHERE username = ?', m[1].toLowerCase());
   let html = await base.text();
   if (row) {
     html = withCard(html, {
       title: 'Eve Sandbox - ' + (row.name || 'Member') + ' (@' + row.username + ')',
       desc: descOf(row.bio, 'A member of the Eve Sandbox Community.'),
       url: url.origin + '/id/' + row.username,
-      image: row.avatar ? url.origin + '/img/a/' + row.id + '?v=' + row.avatar : 'https://evesandbox.com/evesandbox.png',
+      image: row.avatar ? url.origin + '/img/a/' + row.id + '?v=' + row.avatar : await logoUrl(env, url.origin),
       imageAlt: (row.name || 'Member') + "'s profile picture", big: false
     });
-  } else html = withCard(html, { title: 'Eve Sandbox - Community', desc: 'Ask questions, share what you know and help other students.', url: url.origin + '/', image: 'https://evesandbox.com/evesandbox.png' });
+  } else html = withCard(html, { title: 'Eve Sandbox - Community', desc: 'Ask questions, share what you know and help other students.', url: url.origin + '/', image: await logoUrl(env, url.origin) });
   return pageResponse(req, base, html);
 }
 
@@ -616,6 +705,7 @@ async function image(req, env, url) {
     vary: 'Sec-Fetch-Dest',
     etag: o.httpEtag,
     'x-content-type-options': 'nosniff',
+    'x-robots-tag': 'noindex, noimageindex',   // chat apps may fetch a picture for a preview card; search engines should not list it
     'content-security-policy': "default-src 'none'; sandbox",
     'cross-origin-resource-policy': 'same-origin',
     'content-disposition': 'inline'
@@ -625,31 +715,35 @@ async function image(req, env, url) {
 }
 
 // ---------- /p/<id>: the post itself. People get the app, chat apps get a preview card with the post's title, text and first picture ----------
+const POST_CARD_SQL = 'SELECT p.id, p.title, p.body, p.img_count, p.created, u.name AS aname FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE p.id = ?';
+// What a chat app is shown for one post. Used for the real page and for the check at /api/ping?post=<id>, so both always agree.
+async function postCard(env, origin, p) {
+  const has = p.img_count > 0;
+  return {
+    title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
+    desc: descOf(p.body, 'A post by ' + (p.aname || 'a member') + ' in the Eve Sandbox Community.'),
+    url: origin + '/p/' + p.id,
+    image: has ? origin + '/img/' + p.id + '/0' : await logoUrl(env, origin),
+    imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has
+  };
+}
 async function sharePage(req, env, url) {
   const m = url.pathname.match(/^\/p\/([a-z0-9]{8})\/?$/);
   const base = await appPage(req, env, url);
   if (!base.ok) return base;
   if (!m) return pageResponse(req, base, await base.text(), 404);   // not a post address: the app shows "not found"
-  const p = await env.DB.prepare('SELECT p.id, p.title, p.body, p.img_count, p.created, u.name AS aname FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE p.id = ?').bind(m[1]).first();
+  const { row: p, ok } = await cardRow(env, POST_CARD_SQL, m[1]);
   let html = await base.text();
-  if (!p) return pageResponse(req, base, withCard(html, { title: 'Post not found - Eve Sandbox Community', desc: 'This post does not exist or was deleted.', url: url.origin + '/', image: 'https://evesandbox.com/evesandbox.png' }), 404);
-  const origin = url.origin;
-  const has = p.img_count > 0;
-  html = withCard(html, {
-    title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
-    desc: descOf(p.body, 'A post by ' + (p.aname || 'a member') + ' in the Eve Sandbox Community.'),
-    url: origin + '/p/' + p.id,
-    image: has ? origin + '/img/' + p.id + '/0' : 'https://evesandbox.com/evesandbox.png',
-    imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has
-  });
-  return pageResponse(req, base, html);
+  if (!ok) return pageResponse(req, base, html);                    // the database did not answer: open the app anyway, it asks again itself
+  if (!p) return pageResponse(req, base, withCard(html, { title: 'Post not found - Eve Sandbox Community', desc: 'This post does not exist or was deleted.', url: url.origin + '/', image: await logoUrl(env, url.origin) }), 404);
+  return pageResponse(req, base, withCard(html, await postCard(env, url.origin, p)));
 }
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     try {
-      if (url.pathname.startsWith('/api/')) return await api(req, env, url);
+      if (url.pathname.startsWith('/api/')) return await retryRead(req, () => api(req, env, url));
       if (url.pathname.startsWith('/img/')) return await image(req, env, url);
       if (url.pathname.startsWith('/p/')) return await sharePage(req, env, url);
       if (url.pathname.startsWith('/id/')) return await profilePage(req, env, url);
