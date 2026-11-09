@@ -22,10 +22,13 @@ export function createStore(fbConfig) {
     let j = null;
     try { j = await r.json(); } catch (e) { /* not JSON */ }
     if (!r.ok) {
-      const code = (j && j.error) || (r.status >= 500 ? 'server' : 'bad-request');
+      // A 403 without our own error code did not come from this site: a security check in front of it (it expires after a while) blocked the request.
+      const code = (j && j.error) || (r.status === 403 ? 'security-check' : r.status >= 500 ? 'server' : 'bad-request');
       if (code === 'sign-in' && user) { user = null; tell(); }
       const e = err(code); e.status = r.status; e.path = path; if (j && j.ref) e.ref = j.ref;
       if (!j) e.plain = true;   // the answer was not ours (an error page from the network), so trying again may well work
+      // Opening the page again lets the browser pass that check (it cannot be passed from inside a background request). Once a minute at most, never for changes.
+      if (code === 'security-check' && method === 'GET') { try { const t = +sessionStorage.getItem('eve-sc') || 0; if (Date.now() - t > 60000) { sessionStorage.setItem('eve-sc', String(Date.now())); location.reload(); } } catch (x) { /* no storage: the message below tells the person to reload */ } }
       throw e;
     }
     return j;
@@ -36,7 +39,7 @@ export function createStore(fbConfig) {
     for (let i = 1; ; i++) {
       try { return await once(method, path, body, form); }
       catch (e) {
-        const temporary = e.code === 'unavailable' || e.code === 'server' || e.status >= 500 || e.plain;
+        const temporary = e.code !== 'security-check' && (e.code === 'unavailable' || e.code === 'server' || e.status >= 500 || e.plain);   // a security check is not passed by asking again
         if (i >= tries || !temporary) throw e;
         await new Promise((res) => setTimeout(res, 350 * i));
       }

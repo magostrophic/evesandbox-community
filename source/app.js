@@ -15,6 +15,7 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
   page: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'
 };
@@ -104,6 +105,7 @@ async function prepImage(f) {
 
 const MSG = {
   unavailable: 'Could not reach the server. Check your internet and try again.',
+  'security-check': 'A security check is needed. Reload the page and complete it, then try again.',
   'sign-in': 'Please sign in again.',
   'need-name': 'Choose a display name first (account menu, top right).',
   banned: 'This account can not post, reply or vote.',
@@ -364,8 +366,8 @@ export function start(store, cfg) {
     else {
       const menu = h('div', { class: 'umenu', hidden: true },
         h('div', { class: 'un' }, h('b', { text: me.name || 'New member' }), me.admin ? h('span', { class: 'chip', text: 'Admin' }) : null),
-        h('button', { type: 'button', text: 'My profile', onclick: () => { menu.hidden = true; if (incomplete()) nameBox(true); else go('/id/' + me.username); } }),
-        h('button', { type: 'button', text: 'Sign out', onclick: () => { menu.hidden = true; store.signOut(); } }));
+        h('button', { type: 'button', onclick: () => { menu.hidden = true; if (incomplete()) nameBox(true); else go('/id/' + me.username); } }, icon('user', 18), h('span', { text: 'My profile' })),
+        h('button', { type: 'button', class: 'out', onclick: () => { menu.hidden = true; store.signOut(); } }, icon('logout', 18), h('span', { text: 'Sign out' })));
       const b = h('button', { class: 'ub', type: 'button', 'aria-label': 'Account menu', 'aria-expanded': 'false' }, avatar(me.uid, me.name || '?', 30, me.avatar));
       b.onclick = (ev) => { ev.stopPropagation(); menu.hidden = !menu.hidden; b.setAttribute('aria-expanded', String(!menu.hidden)); };
       right.append(b, menu);
