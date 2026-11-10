@@ -16,6 +16,10 @@ const ICONS = {
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
   page: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'
 };
@@ -134,6 +138,10 @@ const MSG = {
   'popup-blocked': 'The sign-in window was blocked. Allow pop-ups for this site and press the button again.',
   'unauthorized-domain': 'This address is not allowed for sign-in yet. The site owner must add it in Firebase (Authentication, Settings, Authorized domains).',
   'sign-in-failed': 'Sign-in did not work. Please try again.',
+  'wrong-account': 'That is a different account from the one you are signed in with. Please use the same one.',
+  'need-recent-login': 'Please confirm it is you, then try again.',
+  'password-mismatch': 'The two new passwords are not the same.',
+  'same-password': 'Choose a password that is different from the current one.',
   'email-not-verified': 'Please confirm your email first. Open the link we sent you, then sign in again.',
   'wrong-credentials': 'Wrong email or password.',
   'email-in-use': 'That email already has an account. Use Sign in, or \u201cForgot password?\u201d if you do not remember it.',
@@ -156,7 +164,20 @@ const errInfo = (e) => {
   return bits.join(' | ');
 };
 
+// Display choices (theme, text size) are kept in this browser only; nothing about them goes to the server.
+const PREF = {
+  get(k) { try { return localStorage.getItem('eve-' + k); } catch (e) { return null; } },
+  set(k, v) { try { if (v) localStorage.setItem('eve-' + k, v); else localStorage.removeItem('eve-' + k); } catch (e) { /* the choice just lasts until the page is closed */ } }
+};
+function applyDisplay() {
+  const el = document.documentElement, t = PREF.get('theme'), z = PREF.get('size');
+  if (t === 'light' || t === 'dark') el.setAttribute('data-theme', t); else el.removeAttribute('data-theme');
+  el.style.fontSize = z === 's' ? '13.5px' : z === 'l' ? '17px' : '';
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', t === 'light' ? '#f2f2f7' : '#000000');
+}
+
 export function start(store, cfg) {
+  applyDisplay();
   const root = $('#app');
   let me = null, ready = false, pending = null, seq = 0, lastPost = 0, lastReply = 0;
   const hooks = { redraw: null };
@@ -367,6 +388,7 @@ export function start(store, cfg) {
       const menu = h('div', { class: 'umenu', hidden: true },
         h('div', { class: 'un' }, h('b', { text: me.name || 'New member' }), me.admin ? h('span', { class: 'chip', text: 'Admin' }) : null),
         h('button', { type: 'button', onclick: () => { menu.hidden = true; if (incomplete()) nameBox(true); else go('/id/' + me.username); } }, icon('user', 18), h('span', { text: 'My profile' })),
+        h('button', { type: 'button', class: 'set', onclick: () => { menu.hidden = true; go('/#/settings'); } }, icon('gear', 18), h('span', { text: 'Settings' })),
         h('button', { type: 'button', class: 'out', onclick: () => { menu.hidden = true; store.signOut(); } }, icon('logout', 18), h('span', { text: 'Sign out' })));
       const b = h('button', { class: 'ub', type: 'button', 'aria-label': 'Account menu', 'aria-expanded': 'false' }, avatar(me.uid, me.name || '?', 30, me.avatar));
       b.onclick = (ev) => { ev.stopPropagation(); menu.hidden = !menu.hidden; b.setAttribute('aria-expanded', String(!menu.hidden)); };
@@ -377,8 +399,8 @@ export function start(store, cfg) {
       h('a', { class: 'tag', href: '/', text: 'Community' }), right));
   }
   const footer = () => h('footer', { class: 'foot' }, h('div', { class: 'foot-in' },
-    h('span', {}, '© ' + new Date().getFullYear() + ' Eve Sandbox'),
-    h('span', { class: 'fl' }, h('a', { href: SITE + '/', text: 'Eve Sandbox' }), h('a', { href: SITE + '/terms/', text: 'Terms' }), h('a', { href: SITE + '/privacy/', text: 'Privacy' }), h('a', { href: SITE + '/contact/', text: 'Contact' }))));
+    h('span', {}, '© ' + new Date().getFullYear() + ' Eve Sandbox. All rights reserved.'),
+    h('span', { class: 'fl' }, h('a', { href: SITE + '/', text: 'Home' }), h('a', { href: SITE + '/terms/', text: 'Terms' }), h('a', { href: SITE + '/privacy/', text: 'Privacy' }), h('a', { href: SITE + '/contact/', text: 'Contact' }))));
   document.addEventListener('click', () => { const m = $('.umenu'); if (m && !m.hidden) m.hidden = true; });
 
   // ---------- votes ----------
@@ -887,7 +909,7 @@ export function start(store, cfg) {
       loadReplies();
       hooks.replies = () => { if (rLoading) return; replies.length = 0; rCursor = null; rDone = false; loadReplies(); };
       hooks.redraw = () => { drawHead(); drawReplies(); const t = $('.comp textarea'); if (t) t.placeholder = me ? 'Write a reply...' : 'Sign in to reply'; };
-    }).catch((e) => { console.error('page error', e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: errInfo(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    }).catch((e) => { console.error('page error', errInfo(e), e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: 'This is usually brief. Give it a moment and try again. If it keeps happening, please come back a little later.' }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
     return view;
   }
   const backLink = () => h('a', { class: 'back', href: '/' }, icon('back', 16, 2.4), ' All posts');
@@ -1042,7 +1064,156 @@ export function start(store, cfg) {
       hooks.redraw = () => { drawHead(); if (tab === 'liked') { items = []; cursor = null; done = false; hidden = false; loadMore(); } else drawList(); };
       drawHead(); holder.replaceChildren(head, h('div', { class: 'bar' }, tabs), list, stat, h('div', { class: 'center' }, more));
       loadMore();
-    }).catch((e) => { console.error('page error', e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: errInfo(e) }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    }).catch((e) => { console.error('page error', errInfo(e), e); if (my === seq) holder.replaceChildren(h('div', { class: 'card empty' }, h('p', { text: errText(e) }), h('p', { class: 'fine mute', text: 'This is usually brief. Give it a moment and try again. If it keeps happening, please come back a little later.' }), h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: render }))); });
+    return view;
+  }
+
+  // ---------- settings ----------
+  const SETTINGS = [
+    { id: 'account', icon: 'user', title: 'Account', sub: 'Your details, and deleting your account', need: true },
+    { id: 'display', icon: 'sun', title: 'Display', sub: 'Theme and text size', need: false },
+    { id: 'security', icon: 'shield', title: 'Security', sub: 'Your password and how you sign in', need: true },
+    { id: 'privacy', icon: 'eye', title: 'Privacy', sub: 'What other people can see', need: true }
+  ];
+  function seg(options, current, onPick) {
+    const wrap = h('div', { class: 'seg', role: 'radiogroup' });
+    options.forEach(([val, label]) => {
+      const b = h('button', { type: 'button', role: 'radio', class: val === current ? 'on' : '', 'aria-checked': String(val === current), text: label });
+      b.onclick = () => { onPick(val); wrap.querySelectorAll('button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', String(x === b)); }); };
+      wrap.append(b);
+    });
+    return wrap;
+  }
+  const line = (k, v) => h('div', { class: 'sline' }, h('span', { class: 'sk', text: k }), h('span', { class: 'sv', text: v }));
+
+  function accountSection() {
+    const how = me.provider === 'password' ? 'Email and password' : me.provider === 'google' ? 'Google' : '';
+    const edit = h('button', { class: 'btn sm', type: 'button', text: 'Edit profile', onclick: () => { if (incomplete()) nameBox(true); else go('/id/' + me.username); } });
+    return [
+      h('div', { class: 'card sbox' },
+        line('Email', me.email || '-'), line('Display name', me.name || 'Not set yet'), line('Username', me.username ? '@' + me.username : 'Not set yet'), how ? line('Signed in with', how) : null,
+        h('p', { class: 'fine', text: 'Your name, username, picture, bio and links are changed with Edit profile on your profile page. Your email is never shown to anyone.' }), h('div', { class: 'sact' }, edit)),
+      h('div', { class: 'card sbox sdanger' },
+        h('h3', { text: 'Delete account' }),
+        h('p', { class: 'mute', text: 'Permanently deletes your profile and picture, all your posts (with their pictures), your replies and your votes. This cannot be undone.' }),
+        h('div', { class: 'sact' }, h('button', { class: 'btn danger sm', type: 'button', text: 'Delete my account', onclick: deleteBox })))
+    ];
+  }
+  function displaySection() {
+    return [h('div', { class: 'card sbox' },
+      h('div', { class: 'sline col' }, h('span', { class: 'sk', text: 'Theme' }),
+        seg([['', 'Same as my device'], ['light', 'Light'], ['dark', 'Dark']], PREF.get('theme') || '', (v) => { PREF.set('theme', v); applyDisplay(); })),
+      h('div', { class: 'sline col' }, h('span', { class: 'sk', text: 'Text size' }),
+        seg([['s', 'Small'], ['', 'Normal'], ['l', 'Large']], PREF.get('size') || '', (v) => { PREF.set('size', v); applyDisplay(); })),
+      h('p', { class: 'fine', text: 'These choices are saved in this browser only.' }))];
+  }
+  function securitySection() {
+    if (me.provider === 'google') {
+      return [h('div', { class: 'card sbox' }, h('h3', { text: 'Password' }),
+        h('p', { class: 'mute', text: 'You sign in with Google, so this account has no password of its own. Your Google password and 2-step verification are managed in your Google account.' }),
+        h('div', { class: 'sact' }, h('a', { class: 'btn sm', href: 'https://myaccount.google.com/security', target: '_blank', rel: 'noopener noreferrer', text: 'Open Google account security' })))];
+    }
+    const err = h('p', { class: 'merr', hidden: true, role: 'alert' });
+    const mk = (id, ac, label) => [h('label', { class: 'fl2', for: id, text: label }), h('input', { id, type: 'password', autocomplete: ac, maxlength: '128' })];
+    const [l1, cur] = mk('pwcur', 'current-password', 'Current password'), [l2, nw] = mk('pwnew', 'new-password', 'New password'), [l3, rp] = mk('pwrep', 'new-password', 'New password again');
+    const go2 = h('button', { class: 'btn pri sm', type: 'submit', text: 'Change password' });
+    const forgot = h('button', { class: 'linkbtn', type: 'button', text: 'Forgot your current password?' });
+    const form = h('form', { novalidate: true }, l1, cur, l2, nw, l3, rp, h('p', { class: 'fine', text: 'Use 8 to 128 characters.' }), err, h('div', { class: 'sact' }, go2, forgot));
+    const bad = (code) => { err.hidden = false; err.textContent = errText({ code }); };
+    form.onsubmit = async (ev) => {
+      ev.preventDefault(); err.hidden = true;
+      if (!cur.value) return bad('need-password');
+      if (nw.value.length < 8 || nw.value.length > 128) return bad('weak-password');
+      if (nw.value !== rp.value) return bad('password-mismatch');
+      if (nw.value === cur.value) return bad('same-password');
+      go2.disabled = true;
+      try { await store.changePassword(cur.value, nw.value); form.reset(); toast('Your password was changed.'); }
+      catch (e) { err.hidden = false; err.textContent = errText(e); }
+      go2.disabled = false;
+    };
+    forgot.onclick = async () => {
+      forgot.disabled = true;
+      try { await store.resetPassword(me.email); toast('If that account has a password, we sent a reset link to ' + me.email + '.'); }
+      catch (e) { toast(errText(e), true); }
+      forgot.disabled = false;
+    };
+    return [h('div', { class: 'card sbox' }, h('h3', { text: 'Change password' }), form,
+      me.provider ? null : h('p', { class: 'fine', text: 'Signed in with Google? Then there is no password here: it is managed in your Google account.' }))];
+  }
+  function privacySection() {
+    const sw = h('input', { type: 'checkbox', id: 'swlikes', class: 'sw', role: 'switch' });
+    sw.checked = !!me.showLikes;
+    sw.onchange = async () => {
+      sw.disabled = true;
+      try { const on = await store.setShowLikes(sw.checked); me.showLikes = on; toast(on ? 'Your liked posts are now shown on your profile.' : 'Your liked posts are now private.'); }
+      catch (e) { sw.checked = !sw.checked; toast(errText(e), true); }
+      sw.disabled = false;
+    };
+    return [h('div', { class: 'card sbox' },
+      h('div', { class: 'sline' }, h('label', { class: 'sk', for: 'swlikes', text: 'Show the posts I liked on my profile' }), sw),
+      h('p', { class: 'fine', text: 'Off by default. Everyone can always see your display name, username, picture, bio, links, posts and replies. Your email is never shown.' }))];
+  }
+  const BUILDERS = { account: accountSection, display: displaySection, security: securitySection, privacy: privacySection };
+
+  function deleteBox() {
+    modal((box, close) => {
+      let how = me.provider === 'google' ? 'google' : 'password', busy = false;
+      const err = h('p', { class: 'merr', hidden: true, role: 'alert' });
+      const word = h('input', { id: 'delword', type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-label': 'Type DELETE to confirm' });
+      const pw = h('input', { id: 'delpass', type: 'password', autocomplete: 'current-password', maxlength: '128', 'aria-label': 'Your password' });
+      const pwRow = h('div', {}, h('label', { class: 'fl2', for: 'delpass', text: 'Your password' }), pw);
+      const gnote = h('p', { class: 'fine', text: 'A Google window will open so you can confirm it is you.' });
+      const swap = h('button', { class: 'linkbtn', type: 'button', hidden: !!me.provider });
+      const ok = h('button', { class: 'btn danger', type: 'button', text: 'Delete my account', disabled: true });
+      const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close });
+      const paint = () => {
+        pwRow.hidden = how === 'google'; gnote.hidden = how !== 'google';
+        swap.textContent = how === 'google' ? 'Use my password instead' : 'Use Google instead';
+        ok.disabled = busy || word.value.trim().toUpperCase() !== 'DELETE' || (how === 'password' && !pw.value);
+      };
+      swap.onclick = () => { how = how === 'google' ? 'password' : 'google'; paint(); };
+      word.oninput = pw.oninput = paint;
+      ok.onclick = async () => {
+        busy = true; paint(); err.hidden = true; ok.textContent = 'Deleting...';
+        try {
+          await store.deleteAccount(how, pw.value);
+          close(); feed.posts = []; feed.cursor = null; feed.done = false; feed.sortLoaded = null;
+          toast('Your account has been deleted.'); go('/');
+        } catch (e) {
+          busy = false; ok.textContent = 'Delete my account'; paint();
+          if (e.code !== 'cancelled') { err.hidden = false; err.textContent = errText(e); }
+        }
+      };
+      box.append(h('h3', { text: 'Delete your account?' }),
+        h('p', { class: 'mute', text: 'Your profile, picture, posts and their pictures, replies and votes will be permanently deleted. This cannot be undone.' }),
+        h('label', { class: 'fl2', for: 'delword', text: 'Type DELETE to confirm' }), word,
+        pwRow, gnote, swap, err, h('div', { class: 'mrow' }, cancel, ok));
+      paint();
+    });
+  }
+
+  function settingsView(sec) {
+    const view = h('main', { class: 'wrap' });
+    const draw = () => {
+      document.title = 'Eve Sandbox - Settings';
+      const item = SETTINGS.find((x) => x.id === sec);
+      if (!ready) { view.replaceChildren(h('div', { class: 'card empty' }, h('p', { class: 'mute', text: 'One moment...' }))); return; }
+      if (!item) {
+        view.replaceChildren(...[
+          h('div', { class: 'hd' }, h('h1', { text: 'Settings' }), h('p', { class: 'mute', text: 'Manage your account and how the community looks for you.' })),
+          me ? null : h('div', { class: 'card sbox' }, h('p', { class: 'mute', text: 'Sign in to manage your account. Display settings work without signing in.' }), h('div', { class: 'sact' }, h('button', { class: 'btn pri sm', type: 'button', text: 'Sign in', onclick: signInBox }))),
+          h('div', { class: 'card slist' }, SETTINGS.map((x) => h('a', { class: 'srow', href: '/#/settings/' + x.id },
+            h('span', { class: 'sic' }, icon(x.icon, 20)), h('span', { class: 'stx' }, h('b', { text: x.title }), h('span', { class: 'mute', text: x.sub })), icon('fwd', 18))))].filter(Boolean));
+        return;
+      }
+      const back = h('a', { class: 'sback', href: '/#/settings' }, icon('back', 18), h('span', { text: 'Settings' }));
+      if (item.need && !me) {
+        view.replaceChildren(back, h('div', { class: 'card empty' }, h('h2', { text: 'Sign in to continue' }), h('p', { class: 'mute', text: 'Please sign in to see these settings.' }), h('button', { class: 'btn pri', type: 'button', text: 'Sign in', onclick: signInBox })));
+        return;
+      }
+      view.replaceChildren(back, h('div', { class: 'hd' }, h('h1', { text: item.title }), h('p', { class: 'mute', text: item.sub })), ...BUILDERS[item.id]());
+    };
+    hooks.redraw = draw; draw();
     return view;
   }
 
@@ -1053,6 +1224,8 @@ export function start(store, cfg) {
     const pp = location.pathname.match(/^\/p\/([^/]+)\/?$/);
     if (pp) { let id = pp[1]; try { id = decodeURIComponent(id); } catch (e) { /* keep as typed */ } return { name: 'post', id: id.toLowerCase() }; }
     const hsh = location.hash || '#/';
+    const sm = hsh.match(/^#\/settings(?:\/([a-z]+))?\/?$/);
+    if (sm) return { name: 'settings', sec: sm[1] || '' };
     const m = hsh.match(/^#\/post\/([^/?]+)/);
     if (m) { let id = m[1]; try { id = decodeURIComponent(id); } catch (e) { /* keep as typed */ } return { name: 'post', id: id.toLowerCase() }; }
     return { name: 'feed', sort: hsh.indexOf('#/top') === 0 ? 'top' : 'new' };
@@ -1066,7 +1239,8 @@ export function start(store, cfg) {
     if (r.name === 'feed') {
       if (feed.sort !== r.sort) { feed.sort = r.sort; feed.posts = []; feed.cursor = null; feed.done = false; feed.sortLoaded = null; }
       root.replaceChildren(feedView());
-    } else if (r.name === 'profile') root.replaceChildren(profileView(r.user, r.tab));
+    } else if (r.name === 'settings') root.replaceChildren(settingsView(r.sec));
+    else if (r.name === 'profile') root.replaceChildren(profileView(r.user, r.tab));
     else root.replaceChildren(postView(r.id));
     window.scrollTo(0, 0);
   }

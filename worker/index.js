@@ -61,12 +61,12 @@ async function hmacKey(env) {
   if (!env.SESSION_SECRET || String(env.SESSION_SECRET).length < 32) fail(503, 'not-configured');
   return crypto.subtle.importKey('raw', enc.encode(env.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
-async function makeSession(env, uid) {
-  const p = bytesToB64u(enc.encode(JSON.stringify({ u: uid, e: Date.now() + SESSION_MS })));
+async function makeSession(env, uid, prov) {
+  const p = bytesToB64u(enc.encode(JSON.stringify({ u: uid, e: Date.now() + SESSION_MS, p: prov === 'password' ? 'password' : prov === 'google.com' ? 'google' : '' })));
   const sig = await crypto.subtle.sign('HMAC', await hmacKey(env), enc.encode(p));
   return p + '.' + bytesToB64u(sig);
 }
-async function readSession(env, req) {
+async function readSession(env, req, full) {
   const m = (req.headers.get('cookie') || '').match(/(?:^|;\s*)(?:__Host-)?eve_s=([A-Za-z0-9_\-.]+)/);
   if (!m) return null;
   const [p, s] = m[1].split('.');
@@ -75,7 +75,7 @@ async function readSession(env, req) {
     const ok = await crypto.subtle.verify('HMAC', await hmacKey(env), b64uToBytes(s), enc.encode(p));
     if (!ok) return null;
     const o = JSON.parse(new TextDecoder().decode(b64uToBytes(p)));
-    return o && typeof o.u === 'string' && o.e > Date.now() ? o.u : null;
+    return o && typeof o.u === 'string' && o.e > Date.now() ? (full ? o : o.u) : null;
   } catch (e) { if (e instanceof HttpErr) throw e; return null; }
 }
 const cookieHeader = (url, value, maxAge) =>
@@ -86,7 +86,7 @@ async function currentUser(env, req) {
   if (!uid) return null;
   return (await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first()) || null;
 }
-const userOut = (u) => ({ uid: u.id, name: u.name || '', username: u.username || '', avatar: u.avatar || 0, admin: !!u.is_admin, suggest: cleanName(u.gname || ''), banned: !!u.banned });
+const userOut = (u, prov) => ({ email: u.email || '', provider: prov || '', showLikes: !!u.show_likes, uid: u.id, name: u.name || '', username: u.username || '', avatar: u.avatar || 0, admin: !!u.is_admin, suggest: cleanName(u.gname || ''), banned: !!u.banned });
 async function needUser(env, req) { const u = await currentUser(env, req); return u || fail(401, 'sign-in'); }
 async function needWriter(env, req) {
   const u = await needUser(env, req);
@@ -149,7 +149,7 @@ const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
 // ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
-const BUILD = '2026-11-10a';
+const BUILD = '2026-11-10b';
 async function ping(env, url) {
   const checks = {};
   const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
@@ -211,7 +211,11 @@ async function api(req, env, url) {
     const ok = env.FIREBASE_PROJECT_ID && env.FIREBASE_API_KEY && env.FIREBASE_APP_ID;
     return json({ firebase: ok ? { apiKey: env.FIREBASE_API_KEY, authDomain: env.FIREBASE_PROJECT_ID + '.firebaseapp.com', projectId: env.FIREBASE_PROJECT_ID, appId: env.FIREBASE_APP_ID } : null });
   }
-  if (path === '/api/me' && method === 'GET') { const u = await currentUser(env, req); return json({ user: u ? userOut(u) : null }); }
+  if (path === '/api/me' && method === 'GET') {
+    const s = await readSession(env, req, true);
+    const u = s ? await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(s.u).first() : null;
+    return json({ user: u ? userOut(u, s.p) : null });
+  }
 
   if (path === '/api/auth/login' && method === 'POST') {
     const body = await readJson(req);
@@ -235,7 +239,7 @@ async function api(req, env, url) {
       await env.DB.prepare('UPDATE users SET gname = ?, email = ? WHERE id = ?').bind(gname, String(p.email).slice(0, 200), u.id).run();
       u.gname = gname;
     }
-    return json({ user: userOut(u) }, 200, { 'set-cookie': cookieHeader(url, await makeSession(env, u.id), SESSION_MS / 1000) });
+    return json({ user: userOut(u, p.firebase.sign_in_provider === 'password' ? 'password' : 'google') }, 200, { 'set-cookie': cookieHeader(url, await makeSession(env, u.id, p.firebase.sign_in_provider), SESSION_MS / 1000) });
   }
   if (path === '/api/auth/logout' && method === 'POST') return json({ ok: true }, 200, { 'set-cookie': cookieHeader(url, '', 0) });
 
@@ -259,6 +263,14 @@ async function api(req, env, url) {
     const fresh = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(u.id).first();
     return json({ user: userOut(fresh) });
   }
+  if (path === '/api/me/likes' && method === 'POST') {
+    const u = await needUser(env, req);
+    if (u.banned) fail(403, 'banned');
+    const b = await readJson(req);
+    await env.DB.prepare('UPDATE users SET show_likes = ? WHERE id = ?').bind(b.showLikes === true ? 1 : 0, u.id).run();
+    return json({ showLikes: b.showLikes === true });
+  }
+  if (path === '/api/me' && method === 'DELETE') return deleteAccount(req, env, url);
   if (path === '/api/me/avatar' && method === 'POST') return setAvatar(req, env);
   if (path === '/api/me/avatar' && method === 'DELETE') {
     const u = await needUser(env, req);
@@ -395,6 +407,33 @@ async function createPost(req, env) {
 async function dropImages(env, id, n) {
   const keys = []; for (let i = 0; i < Math.max(n, 0); i++) keys.push(id + '/' + i);
   if (keys.length) { try { await env.IMAGES.delete(keys); } catch (e) { console.error('r2 delete', e); } }
+}
+
+// Deleting an account removes everything the person made. The browser must have just signed in again (a fresh Firebase token for the same account).
+async function deleteAccount(req, env, url) {
+  const u = await needUser(env, req);
+  if (u.banned) fail(403, 'banned');   // an account that was restricted cannot be erased to start over
+  const b = await readJson(req);
+  if (b.confirm !== true) fail(400, 'bad-request');
+  const p = await verifyIdToken(env, b.idToken);
+  if (p.sub !== u.google_sub) fail(403, 'wrong-account');
+  if (!(Date.now() / 1000 - (p.auth_time || 0) <= 300)) fail(401, 'need-recent-login');
+  const posts = (await env.DB.prepare('SELECT id, img_count FROM posts WHERE author_id = ?').bind(u.id).all()).results || [];
+  const keys = [];
+  posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); });
+  keys.push('a/' + u.id);
+  const id = u.id, mine = '(SELECT id FROM posts WHERE author_id = ?1)';
+  await env.DB.batch([
+    env.DB.prepare('UPDATE posts SET score = score - COALESCE((SELECT value FROM votes WHERE post_id = posts.id AND user_id = ?1), 0) WHERE id IN (SELECT post_id FROM votes WHERE user_id = ?1)').bind(id),
+    env.DB.prepare('UPDATE posts SET reply_count = (SELECT COUNT(*) FROM replies WHERE post_id = posts.id AND author_id != ?1) WHERE id IN (SELECT post_id FROM replies WHERE author_id = ?1)').bind(id),
+    env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1 OR post_id IN ' + mine + ' OR reply_id IN (SELECT id FROM replies WHERE author_id = ?1)').bind(id),
+    env.DB.prepare('DELETE FROM votes WHERE user_id = ?1 OR post_id IN ' + mine).bind(id),
+    env.DB.prepare('DELETE FROM replies WHERE author_id = ?1 OR post_id IN ' + mine).bind(id),
+    env.DB.prepare('DELETE FROM posts WHERE author_id = ?1').bind(id),
+    env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(id)
+  ]);
+  for (let i = 0; i < keys.length; i += 1000) { try { await env.IMAGES.delete(keys.slice(i, i + 1000)); } catch (e) { console.error('r2 delete', e); } }
+  return json({ ok: true }, 200, { 'set-cookie': cookieHeader(url, '', 0) });
 }
 
 async function deletePost(req, env, id) {
