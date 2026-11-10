@@ -142,8 +142,8 @@ async function verifyIdToken(env, token) {
 }
 
 // ---------- row -> JSON ----------
-const postOut = (r) => ({ id: r.id, title: r.title, body: r.body, score: r.score, replyCount: r.reply_count, createdAt: r.created, authorId: r.author_id, authorName: r.aname || 'Member', authorUser: r.auser || '', authorAvatar: r.aav || 0, images: r.img_count });
-const replyOut = (r) => ({ id: r.id, body: r.body, authorId: r.author_id, authorName: r.aname || 'Member', authorUser: r.auser || '', authorAvatar: r.aav || 0, createdAt: r.created, postId: r.post_id, postTitle: r.ptitle });
+const postOut = (r) => ({ id: r.id, title: r.title, body: r.body, score: r.score, replyCount: r.reply_count, createdAt: r.created, authorId: r.author_id, authorName: r.aname || 'Deleted User', authorUser: r.auser || '', authorAvatar: r.aav || 0, images: r.img_count });
+const replyOut = (r) => ({ id: r.id, body: r.body, authorId: r.author_id, authorName: r.aname || 'Deleted User', authorUser: r.auser || '', authorAvatar: r.aav || 0, createdAt: r.created, postId: r.post_id, postTitle: r.ptitle });
 const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS aav FROM posts p LEFT JOIN users u ON u.id = p.author_id';
 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
@@ -418,20 +418,36 @@ async function deleteAccount(req, env, url) {
   const p = await verifyIdToken(env, b.idToken);
   if (p.sub !== u.google_sub) fail(403, 'wrong-account');
   if (!(Date.now() / 1000 - (p.auth_time || 0) <= 300)) fail(401, 'need-recent-login');
-  const posts = (await env.DB.prepare('SELECT id, img_count FROM posts WHERE author_id = ?').bind(u.id).all()).results || [];
-  const keys = [];
-  posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); });
-  keys.push('a/' + u.id);
+  // What happens to what the person made is their choice. Without any ticks, only the account goes and posts / replies stay as "Deleted User".
+  const wantPosts = b.deletePosts === true, wantReplies = b.deleteReplies === true, wantMedia = wantPosts || b.deleteMedia === true;
   const id = u.id, mine = '(SELECT id FROM posts WHERE author_id = ?1)';
-  await env.DB.batch([
+  const keys = ['a/' + u.id];
+  if (wantMedia) {
+    const posts = (await env.DB.prepare('SELECT id, img_count FROM posts WHERE author_id = ?').bind(id).all()).results || [];
+    posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); });
+  }
+  const st = [
     env.DB.prepare('UPDATE posts SET score = score - COALESCE((SELECT value FROM votes WHERE post_id = posts.id AND user_id = ?1), 0) WHERE id IN (SELECT post_id FROM votes WHERE user_id = ?1)').bind(id),
-    env.DB.prepare('UPDATE posts SET reply_count = (SELECT COUNT(*) FROM replies WHERE post_id = posts.id AND author_id != ?1) WHERE id IN (SELECT post_id FROM replies WHERE author_id = ?1)').bind(id),
-    env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1 OR post_id IN ' + mine + ' OR reply_id IN (SELECT id FROM replies WHERE author_id = ?1)').bind(id),
-    env.DB.prepare('DELETE FROM votes WHERE user_id = ?1 OR post_id IN ' + mine).bind(id),
-    env.DB.prepare('DELETE FROM replies WHERE author_id = ?1 OR post_id IN ' + mine).bind(id),
-    env.DB.prepare('DELETE FROM posts WHERE author_id = ?1').bind(id),
-    env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(id)
-  ]);
+    env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1').bind(id),
+    env.DB.prepare('DELETE FROM votes WHERE user_id = ?1').bind(id)
+  ];
+  if (wantReplies || wantPosts) {
+    // replies of theirs that go (all of them if they chose replies; the ones under their own posts if the posts go)
+    const where = wantReplies ? 'author_id = ?1 OR post_id IN ' + mine : 'post_id IN ' + mine;
+    st.push(
+      env.DB.prepare('UPDATE posts SET reply_count = (SELECT COUNT(*) FROM replies WHERE post_id = posts.id AND NOT (' + where + ')) WHERE id IN (SELECT post_id FROM replies WHERE ' + where + ')').bind(id),
+      env.DB.prepare('DELETE FROM reports WHERE reply_id IN (SELECT id FROM replies WHERE ' + where + ')').bind(id),
+      env.DB.prepare('DELETE FROM replies WHERE ' + where).bind(id));
+  }
+  if (wantPosts) st.push(
+    env.DB.prepare('DELETE FROM reports WHERE post_id IN ' + mine).bind(id),
+    env.DB.prepare('DELETE FROM votes WHERE post_id IN ' + mine).bind(id),
+    env.DB.prepare('DELETE FROM posts WHERE author_id = ?1').bind(id));
+  else if (wantMedia) st.push(env.DB.prepare('UPDATE posts SET img_count = 0, img_bytes = 0 WHERE author_id = ?1').bind(id));
+  // What stays no longer points to the person at all.
+  st.push(env.DB.prepare("UPDATE posts SET author_id = 'deleted' WHERE author_id = ?1").bind(id), env.DB.prepare("UPDATE replies SET author_id = 'deleted' WHERE author_id = ?1").bind(id));
+  st.push(env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(id));
+  await env.DB.batch(st);
   for (let i = 0; i < keys.length; i += 1000) { try { await env.IMAGES.delete(keys.slice(i, i + 1000)); } catch (e) { console.error('r2 delete', e); } }
   return json({ ok: true }, 200, { 'set-cookie': cookieHeader(url, '', 0) });
 }
@@ -761,7 +777,7 @@ async function postCard(env, origin, p) {
   const has = p.img_count > 0;
   const c = {
     title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
-    desc: descOf(p.body, 'A post by ' + (p.aname || 'a member') + ' in the Eve Sandbox Community.'),
+    desc: descOf(p.body, 'A post by ' + (p.aname || 'a deleted user') + ' in the Eve Sandbox Community.'),
     url: origin + '/p/' + p.id,
     image: has ? origin + '/img/' + p.id + '/0' : await logoUrl(env, origin),
     imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has,
@@ -770,7 +786,7 @@ async function postCard(env, origin, p) {
       '@context': 'https://schema.org', '@type': 'DiscussionForumPosting', headline: p.title.slice(0, 110),
       url: origin + '/p/' + p.id, mainEntityOfPage: origin + '/p/' + p.id,
       datePublished: new Date(p.created).toISOString(), commentCount: p.reply_count || 0,
-      author: Object.assign({ '@type': 'Person', name: p.aname || 'Member' }, p.auser ? { url: origin + '/id/' + p.auser } : {}),
+      author: Object.assign({ '@type': 'Person', name: p.aname || 'Deleted User' }, p.auser ? { url: origin + '/id/' + p.auser } : {}),
       isPartOf: { '@type': 'WebSite', name: 'Eve Sandbox Community', url: origin + '/' }
     }
   };

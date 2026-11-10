@@ -162,7 +162,7 @@ export function createStore(fbConfig) {
       catch (e) { throw mapAuthError(e); }
       finally { await quietOut(); }
     },
-    async deleteAccount(how, password) {
+    async deleteAccount(how, password, opts) {
       if (!user) throw err('sign-in');
       let res;
       try {
@@ -178,7 +178,7 @@ export function createStore(fbConfig) {
       let gone = false;
       try {
         const idToken = await res.user.getIdToken();
-        await call('DELETE', '/api/me', { idToken, confirm: true });   // our data first; the sign-in account is removed right after
+        await call('DELETE', '/api/me', Object.assign({ idToken, confirm: true }, opts || {}));   // our data first; the sign-in account is removed right after
         try { await deleteUser(res.user); gone = true; } catch (e) { /* the data is gone either way */ }
       } finally { await quietOut(); }
       user = null; tell();

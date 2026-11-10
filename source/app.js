@@ -1095,7 +1095,7 @@ export function start(store, cfg) {
         h('p', { class: 'fine', text: 'Your name, username, picture, bio and links are changed with Edit profile on your profile page. Your email is never shown to anyone.' }), h('div', { class: 'sact' }, edit)),
       h('div', { class: 'card sbox sdanger' },
         h('h3', { text: 'Delete account' }),
-        h('p', { class: 'mute', text: 'Permanently deletes your profile and picture, all your posts (with their pictures), your replies and your votes. This cannot be undone.' }),
+        h('p', { class: 'mute', text: 'Permanently deletes your account, profile and picture. You choose whether your posts, pictures and replies are deleted too. This cannot be undone.' }),
         h('div', { class: 'sact' }, h('button', { class: 'btn danger sm', type: 'button', text: 'Delete my account', onclick: deleteBox })))
     ];
   }
@@ -1164,6 +1164,13 @@ export function start(store, cfg) {
       const pwRow = h('div', {}, h('label', { class: 'fl2', for: 'delpass', text: 'Your password' }), pw);
       const gnote = h('p', { class: 'fine', text: 'A Google window will open so you can confirm it is you.' });
       const swap = h('button', { class: 'linkbtn', type: 'button', hidden: !!me.provider });
+      const opt = (id, text) => { const c = h('input', { type: 'checkbox', id }); return [c, h('label', { class: 'opt', for: id }, c, h('span', { text }))]; };
+      const [cbPosts, lPosts] = opt('delposts', 'Also delete all my posts (and the pictures on them)');
+      const [cbMedia, lMedia] = opt('delmedia', 'Also delete the pictures on my posts');
+      const [cbReplies, lReplies] = opt('delreplies', 'Also delete all my replies');
+      const choice = h('div', { class: 'opts' }, h('p', { class: 'fl2', text: 'What should happen to what you shared?' }), lPosts, lMedia, lReplies,
+        h('p', { class: 'fine', text: 'Anything you leave unticked stays, shown as \u201cDeleted User\u201d. Your votes, reports and profile picture are always removed.' }));
+      cbPosts.onchange = () => { if (cbPosts.checked) cbMedia.checked = true; cbMedia.disabled = cbPosts.checked; };
       const ok = h('button', { class: 'btn danger', type: 'button', text: 'Delete my account', disabled: true });
       const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close });
       const paint = () => {
@@ -1176,7 +1183,7 @@ export function start(store, cfg) {
       ok.onclick = async () => {
         busy = true; paint(); err.hidden = true; ok.textContent = 'Deleting...';
         try {
-          await store.deleteAccount(how, pw.value);
+          await store.deleteAccount(how, pw.value, { deletePosts: cbPosts.checked, deleteMedia: cbMedia.checked, deleteReplies: cbReplies.checked });
           close(); feed.posts = []; feed.cursor = null; feed.done = false; feed.sortLoaded = null;
           toast('Your account has been deleted.'); go('/');
         } catch (e) {
@@ -1185,9 +1192,9 @@ export function start(store, cfg) {
         }
       };
       box.append(h('h3', { text: 'Delete your account?' }),
-        h('p', { class: 'mute', text: 'Your profile, picture, posts and their pictures, replies and votes will be permanently deleted. This cannot be undone.' }),
+        h('p', { class: 'mute', text: 'Your account and profile will be permanently deleted. This cannot be undone.' }),
         h('label', { class: 'fl2', for: 'delword', text: 'Type DELETE to confirm' }), word,
-        pwRow, gnote, swap, err, h('div', { class: 'mrow' }, cancel, ok));
+        choice, pwRow, gnote, swap, err, h('div', { class: 'mrow' }, cancel, ok));
       paint();
     });
   }
