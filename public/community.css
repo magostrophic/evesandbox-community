@@ -268,3 +268,17 @@ img{-webkit-touch-callout:none;-webkit-user-drag:none}
 .opts{margin:8px 0 4px}.opts .fl2{margin:4px 0 6px}
 .opt{display:flex;align-items:flex-start;gap:10px;padding:6px 0;cursor:pointer;font-size:.95rem}
 .opt input{flex:none;width:18px;height:18px;margin:2px 0 0;accent-color:var(--brand)}
+
+/* edit profile: title bar with a close button, scrolling middle, buttons that stay in view */
+.mbox.edit{display:flex;flex-direction:column;padding:0;overflow:hidden;max-width:440px}
+.mhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 12px 10px 20px;border-bottom:.5px solid var(--line);flex:none}
+.mhead h3{margin:0!important}
+.mx{flex:none;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:0;border-radius:50%;background:var(--fill);color:var(--ink);cursor:pointer}
+.mx:hover{background:var(--line)}.mx:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.mbody{overflow:auto;padding:12px 20px 8px;flex:1 1 auto;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.mfoot{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:.5px solid var(--line);flex:none}
+@media (max-width:600px){
+  .mback{padding:max(56px,env(safe-area-inset-top)) 14px max(64px,env(safe-area-inset-bottom))}
+  .mbox,.mbox.wide{max-height:100%}
+  .mbox.edit{max-width:none}
+}

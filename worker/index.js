@@ -259,7 +259,8 @@ async function api(req, env, url) {
     if (bio.length > L_BIO) fail(400, 'bad-bio');
     const links = parseLinks(b.links);
     await setIdentity(env, u, b.name, b.username);
-    await env.DB.prepare('UPDATE users SET bio = ?, links = ?, show_likes = ? WHERE id = ?').bind(bio, JSON.stringify(links), b.showLikes === true ? 1 : 0, u.id).run();
+    if (typeof b.showLikes === 'boolean') await env.DB.prepare('UPDATE users SET bio = ?, links = ?, show_likes = ? WHERE id = ?').bind(bio, JSON.stringify(links), b.showLikes ? 1 : 0, u.id).run();
+    else await env.DB.prepare('UPDATE users SET bio = ?, links = ? WHERE id = ?').bind(bio, JSON.stringify(links), u.id).run();
     const fresh = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(u.id).first();
     return json({ user: userOut(fresh) });
   }

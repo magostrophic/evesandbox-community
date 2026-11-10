@@ -978,7 +978,6 @@ export function start(store, cfg) {
       const bc = h('span', { class: 'mute', text: bio.value.length + ' / 300' }); bio.oninput = () => { bc.textContent = bio.value.length + ' / 300'; };
       const ig = fld('e-ig', 'Instagram', L2.instagram, 'username or profile link'), dc = fld('e-dc', 'Discord', L2.discord, 'username or invite link (discord.gg/...)'),
         xx = fld('e-x', 'X', L2.x, 'username or profile link'), yt = fld('e-yt', 'YouTube', L2.youtube, '@handle or channel link'), wb = fld('e-web', 'Website', L2.website, 'https://...');
-      const lk = h('input', { type: 'checkbox', id: 'elikes', checked: !!pf.showLikes });
       const go2 = h('button', { class: 'btn pri', type: 'button', text: 'Save' });
       go2.onclick = async () => {
         const name = cleanName(nm[1].value), un = us[1].value.trim().toLowerCase().replace(/^@/, '');
@@ -986,19 +985,22 @@ export function start(store, cfg) {
         if (!USER_RE.test(un)) return showErr(errText({ code: 'bad-username' }));
         err.hidden = true; go2.disabled = true;
         try {
-          const r = await store.saveProfile({ name, username: un, bio: bio.value.trim(), showLikes: lk.checked,
+          const r = await store.saveProfile({ name, username: un, bio: bio.value.trim(),
             links: { instagram: ig[1].value, discord: dc[1].value, x: xx[1].value, youtube: yt[1].value, website: wb[1].value } });
           close(); toast('Profile saved'); renderHeader();
           go('/id/' + r.username + location.search);
         } catch (e) { go2.disabled = false; showErr(errText(e)); }
       };
-      box.append(h('h3', { text: 'Edit profile' }), avrow, fin, ...nm, h('p', { class: 'fine', text: 'Shown on your posts and replies.' }), ...us,
+      box.classList.add('edit');
+      const x = h('button', { class: 'mx', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 20));
+      box.append(h('div', { class: 'mhead' }, h('h3', { text: 'Edit profile' }), x),
+        h('div', { class: 'mbody' }, avrow, fin, ...nm, h('p', { class: 'fine', text: 'Shown on your posts and replies.' }), ...us,
         h('p', { class: 'fine', text: 'Your address: ' + location.host + '/id/username. You can change the username once every 30 days.' }),
         h('label', { class: 'fl2', for: 'ebio', text: 'Bio' }), bio, h('div', { class: 'crow' }, bc),
         h('h4', { class: 'fl3', text: 'Links (all optional)' }), ...ig, ...dc, ...xx, ...yt, ...wb,
-        h('label', { class: 'chk' }, lk, ' Show the posts I like on my profile'),
-        h('p', { class: 'fine', text: 'Off by default. Only upvotes are shown, and only if you turn this on. Everything on a profile is public.' }),
-        err, h('div', { class: 'mrow' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close }), go2));
+        h('p', { class: 'fine', text: 'Everything on a profile is public. Whether your liked posts show is set in Settings, Privacy.' }),
+        err),
+        h('div', { class: 'mfoot' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close }), go2));
     });
   }
 
