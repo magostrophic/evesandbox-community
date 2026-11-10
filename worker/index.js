@@ -149,7 +149,7 @@ const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
 // ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
-const BUILD = '2026-11-09c';
+const BUILD = '2026-11-10a';
 async function ping(env, url) {
   const checks = {};
   const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
@@ -622,7 +622,7 @@ function withCard(html, c) {
   const tags =
     '<title>' + title + '</title>' +
     '<meta name="description" content="' + desc + '">' +
-    '<meta name="robots" content="noindex">' +
+    (c.index ? '<meta name="robots" content="index, follow, max-image-preview:large">' : '<meta name="robots" content="noindex">') +
     '<link rel="canonical" href="' + url + '">' +
     '<meta property="og:site_name" content="Eve Sandbox">' +
     '<meta property="og:type" content="' + (c.type || 'website') + '">' +
@@ -635,7 +635,8 @@ function withCard(html, c) {
     '<meta name="twitter:title" content="' + title + '">' +
     '<meta name="twitter:description" content="' + desc + '">' +
     '<meta name="twitter:image" content="' + img + '">' +
-    '<meta name="twitter:image:alt" content="' + alt + '">';
+    '<meta name="twitter:image:alt" content="' + alt + '">' +
+    (c.ld ? '<script type="application/ld+json">' + JSON.stringify(c.ld).replace(/</g, '\\u003c') + '</script>' : '');
   if (/<meta\s+charset[^>]*>/i.test(html)) return html.replace(/<meta\s+charset[^>]*>/i, (m) => m + tags);
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + '<meta charset="utf-8">' + tags);
   return '<meta charset="utf-8">' + tags + html;
@@ -684,7 +685,7 @@ async function profilePage(req, env, url) {
       desc: descOf(row.bio, 'A member of the Eve Sandbox Community.'),
       url: url.origin + '/id/' + row.username,
       image: row.avatar ? url.origin + '/img/a/' + row.id + '?v=' + row.avatar : await logoUrl(env, url.origin),
-      imageAlt: (row.name || 'Member') + "'s profile picture", big: false
+      imageAlt: (row.name || 'Member') + "'s profile picture", big: false, index: true
     });
   } else html = withCard(html, { title: 'Eve Sandbox - Community', desc: 'Ask questions, share what you know and help other students.', url: url.origin + '/', image: await logoUrl(env, url.origin) });
   return pageResponse(req, base, html);
@@ -715,19 +716,41 @@ async function image(req, env, url) {
 }
 
 // ---------- /p/<id>: the post itself. People get the app, chat apps get a preview card with the post's title, text and first picture ----------
-const POST_CARD_SQL = 'SELECT p.id, p.title, p.body, p.img_count, p.created, u.name AS aname FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE p.id = ?';
+const POST_CARD_SQL = 'SELECT p.id, p.title, p.body, p.img_count, p.created, p.reply_count, u.name AS aname, u.username AS auser FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE p.id = ?';
 // What a chat app is shown for one post. Used for the real page and for the check at /api/ping?post=<id>, so both always agree.
 async function postCard(env, origin, p) {
   const has = p.img_count > 0;
-  return {
+  const c = {
     title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
     desc: descOf(p.body, 'A post by ' + (p.aname || 'a member') + ' in the Eve Sandbox Community.'),
     url: origin + '/p/' + p.id,
     image: has ? origin + '/img/' + p.id + '/0' : await logoUrl(env, origin),
-    imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has
+    imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has,
+    index: true,
+    ld: {
+      '@context': 'https://schema.org', '@type': 'DiscussionForumPosting', headline: p.title.slice(0, 110),
+      url: origin + '/p/' + p.id, mainEntityOfPage: origin + '/p/' + p.id,
+      datePublished: new Date(p.created).toISOString(), commentCount: p.reply_count || 0,
+      author: Object.assign({ '@type': 'Person', name: p.aname || 'Member' }, p.auser ? { url: origin + '/id/' + p.auser } : {}),
+      isPartOf: { '@type': 'WebSite', name: 'Eve Sandbox Community', url: origin + '/' }
+    }
   };
+  const t = String(p.body || '').replace(/\s+/g, ' ').trim();
+  if (t) c.ld.text = t.slice(0, 500);
+  if (has) c.ld.image = c.image;
+  return c;
+}
+// /p/sitemap.xml: the newest posts, for search engines (it lives under /p/, which this Worker already answers, so no setting has to change).
+async function sitemap(env, url) {
+  let rows = [];
+  try { rows = (await env.DB.prepare('SELECT id, created FROM posts ORDER BY created DESC, id DESC LIMIT 1000').all()).results || []; }
+  catch (e) { console.error('sitemap failed', e && e.message ? e.message : e); return new Response('Try again later', { status: 503, headers: { 'retry-after': '120' } }); }
+  const body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+    rows.map((r) => '<url><loc>' + url.origin + '/p/' + r.id + '</loc><lastmod>' + new Date(r.created).toISOString() + '</lastmod></url>').join('\n') + '\n</urlset>\n';
+  return new Response(body, { headers: { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=600', 'x-content-type-options': 'nosniff' } });
 }
 async function sharePage(req, env, url) {
+  if (url.pathname === '/p/sitemap.xml' && (req.method === 'GET' || req.method === 'HEAD')) return await sitemap(env, url);
   const m = url.pathname.match(/^\/p\/([a-z0-9]{8})\/?$/);
   const base = await appPage(req, env, url);
   if (!base.ok) return base;
