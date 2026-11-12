@@ -1304,6 +1304,10 @@ export function start(store, cfg) {
   $('#ftr').replaceChildren(footer());
   if (!cfg || !cfg.configured) {
     renderHeader();
+    if (cfg && cfg.failed) {
+      root.replaceChildren(h('main', { class: 'wrap' }, h('div', { class: 'card empty' }, h('h2', { text: 'Your session has timed out' }), h('p', { class: 'mute', text: 'Please reload the page to continue.' }), h('button', { class: 'btn pri', type: 'button', text: 'Reload', onclick: () => location.reload() }))));
+      return;
+    }
     root.replaceChildren(h('main', { class: 'wrap' }, h('div', { class: 'card empty' }, h('h2', { text: 'The community is not open yet' }), h('p', { class: 'mute', text: 'It is being set up. Please come back soon.' }), h('a', { class: 'btn pri', href: SITE + '/', text: 'Back to Eve Sandbox' }))));
     return;
   }
