@@ -282,3 +282,18 @@ img{-webkit-touch-callout:none;-webkit-user-drag:none}
   .mbox,.mbox.wide{max-height:100%}
   .mbox.edit{max-width:none}
 }
+
+/* profile picture button, follow button, followers and following */
+.avbtn{border:0;padding:0;background:none;border-radius:50%;cursor:pointer;line-height:0;flex:none;-webkit-tap-highlight-color:transparent}
+.avbtn:active{opacity:.85}.avbtn:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
+.pact{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fy{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:99px;background:var(--fill);font-size:.74rem;color:var(--mute);vertical-align:middle}
+.pstat{border:0;background:none;padding:0;margin:0;font:inherit;color:var(--mute);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pstat:hover{color:var(--ink)}.pstat:focus-visible{outline:2px solid var(--brand);outline-offset:3px;border-radius:6px}
+.frows{display:flex;flex-direction:column}
+.frow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:.5px solid var(--line)}.frow:last-child{border-bottom:0}
+.fuser{display:flex;align-items:center;gap:12px;min-width:0;flex:1;color:var(--ink);text-decoration:none}
+.ftxt{display:flex;flex-direction:column;min-width:0}.ftxt b,.ftxt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fe{padding:28px 8px;text-align:center;margin:0}
+.mbox.flist{max-width:420px}
+@media (max-width:600px){.pstats{gap:14px}}

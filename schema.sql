@@ -56,3 +56,11 @@ CREATE INDEX IF NOT EXISTS replies_author ON replies (author_id, created DESC);
 CREATE INDEX IF NOT EXISTS votes_user ON votes (user_id, post_id);
 CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users (username);
 CREATE INDEX IF NOT EXISTS votes_liked ON votes (user_id, value, at DESC, post_id DESC);
+CREATE TABLE IF NOT EXISTS follows (
+  follower_id TEXT NOT NULL,
+  followee_id TEXT NOT NULL,
+  at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX IF NOT EXISTS follows_to ON follows (followee_id, at DESC);
+CREATE INDEX IF NOT EXISTS follows_from ON follows (follower_id, at DESC);

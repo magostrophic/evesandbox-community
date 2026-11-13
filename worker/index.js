@@ -149,7 +149,7 @@ const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
 // ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
-const BUILD = '2026-11-10b';
+const BUILD = '2026-11-13';
 async function ping(env, url) {
   const checks = {};
   const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
@@ -280,7 +280,8 @@ async function api(req, env, url) {
     try { await env.IMAGES.delete('a/' + u.id); } catch (e) { console.error('r2 delete', e); }
     return json({ ok: true });
   }
-  if ((m = path.match(/^\/api\/users\/([a-z0-9_]{3,20})(?:\/(posts|replies|likes))?$/)) && method === 'GET') return profileApi(req, env, url, m[1], m[2]);
+  if ((m = path.match(/^\/api\/users\/([a-z0-9_]{3,20})\/follow$/)) && (method === 'PUT' || method === 'DELETE')) return followApi(req, env, m[1], method === 'PUT');
+  if ((m = path.match(/^\/api\/users\/([a-z0-9_]{3,20})(?:\/(posts|replies|likes|followers|following))?$/)) && method === 'GET') return profileApi(req, env, url, m[1], m[2]);
 
   if (path === '/api/posts' && method === 'GET') return listPosts(env, url);
   if (path === '/api/posts' && method === 'POST') return createPost(req, env);
@@ -427,6 +428,8 @@ async function deleteAccount(req, env, url) {
     const posts = (await env.DB.prepare('SELECT id, img_count FROM posts WHERE author_id = ?').bind(id).all()).results || [];
     posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); });
   }
+  // Their follows go too (kept apart so erasing an account still works if the follow table was never created).
+  try { await env.DB.prepare('DELETE FROM follows WHERE follower_id = ?1 OR followee_id = ?1').bind(id).run(); } catch (e) { console.error('follows cleanup', e && e.message ? e.message : e); }
   const st = [
     env.DB.prepare('UPDATE posts SET score = score - COALESCE((SELECT value FROM votes WHERE post_id = posts.id AND user_id = ?1), 0) WHERE id IN (SELECT post_id FROM votes WHERE user_id = ?1)').bind(id),
     env.DB.prepare('DELETE FROM reports WHERE reporter_id = ?1').bind(id),
@@ -643,9 +646,25 @@ async function profileApi(req, env, url, uname, what) {
       env.DB.prepare('SELECT COUNT(*) AS n FROM votes WHERE user_id = ? AND value = 1').bind(row.id)
     ]);
     let links = {}; try { links = JSON.parse(row.links || '{}') || {}; } catch (e) { /* none */ }
+    // Followers and following are counted on their own, so a profile still opens even before the follow table has been created.
+    const fl = { followers: 0, following: 0, iFollow: false, followsMe: false };
+    try {
+      const st = [
+        env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE followee_id = ?').bind(row.id),
+        env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE follower_id = ?').bind(row.id)
+      ];
+      if (viewer && !isMe) st.push(
+        env.DB.prepare('SELECT 1 AS y FROM follows WHERE follower_id = ?1 AND followee_id = ?2').bind(viewer.id, row.id),
+        env.DB.prepare('SELECT 1 AS y FROM follows WHERE follower_id = ?1 AND followee_id = ?2').bind(row.id, viewer.id));
+      const fr = await env.DB.batch(st);
+      fl.followers = fr[0].results[0].n; fl.following = fr[1].results[0].n;
+      if (fr[2]) { fl.iFollow = fr[2].results.length > 0; fl.followsMe = fr[3].results.length > 0; }
+    } catch (e) { console.error('follow counts', e && e.message ? e.message : e); }
     return json({ profile: { uid: row.id, username: row.username, name: row.name || 'Member', bio: row.bio || '', links, avatar: row.avatar || 0, createdAt: row.created, showLikes: !!row.show_likes, isMe,
-      counts: { posts: pc.results[0].n, replies: rc.results[0].n, likes: canSeeLikes ? lc.results[0].n : null } } });
+      iFollow: fl.iFollow, followsMe: fl.followsMe,
+      counts: { posts: pc.results[0].n, replies: rc.results[0].n, likes: canSeeLikes ? lc.results[0].n : null, followers: fl.followers, following: fl.following } } });
   }
+  if (what === 'followers' || what === 'following') return followList(env, url, viewer, row, what === 'followers');
   if (what === 'posts') {
     const r = await keyset(env, url, POST_SQL.replace('SELECT p.*,', 'SELECT p.*, p.created AS kt, p.id AS kid,') + ' WHERE p.author_id = ?', [row.id], 'p.created', 'p.id');
     return json({ posts: r.page.map(postOut), cursor: r.cursor, done: r.done });
@@ -657,6 +676,46 @@ async function profileApi(req, env, url, uname, what) {
   if (!canSeeLikes) return json({ hidden: true, posts: [], cursor: null, done: true });
   const r = await keyset(env, url, 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS aav, v.at AS kt, p.id AS kid FROM votes v JOIN posts p ON p.id = v.post_id LEFT JOIN users u ON u.id = p.author_id WHERE v.user_id = ? AND v.value = 1', [row.id], 'v.at', 'p.id');
   return json({ posts: r.page.map(postOut), cursor: r.cursor, done: r.done });
+}
+
+// ---------- following ----------
+const MAX_FOLLOWING = 5000;
+// Follow (PUT) or unfollow (DELETE) a member. Doing the same thing twice is harmless.
+async function followApi(req, env, uname, on) {
+  const u = await needUser(env, req);
+  if (u.banned) fail(403, 'banned');
+  if (!u.name || !u.username) fail(403, 'need-name');
+  const t = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(uname).first();
+  if (!t) fail(404, 'not-found');
+  if (t.id === u.id) fail(400, 'self-follow');
+  try {
+    if (on) {
+      const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE follower_id = ?').bind(u.id).first();
+      if (c.n >= MAX_FOLLOWING) fail(400, 'follow-limit');
+      await env.DB.prepare('INSERT OR IGNORE INTO follows (follower_id, followee_id, at) VALUES (?, ?, ?)').bind(u.id, t.id, Date.now()).run();
+    } else await env.DB.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').bind(u.id, t.id).run();
+  } catch (e) {
+    if (e instanceof HttpErr) throw e;
+    console.error('follow', e && e.message ? e.message : e);
+    fail(503, 'follow-not-ready');
+  }
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE followee_id = ?').bind(t.id).first();
+  return json({ following: on, followers: n.n });
+}
+
+// The people who follow a member, or the people a member follows, newest first, 30 at a time. Each one says whether the viewer follows them.
+async function followList(env, url, viewer, row, followers) {
+  const size = pageSize(url, 30, 40), cur = url.searchParams.get('cursor') || '';
+  const off = cur ? parseInt(cur, 10) : 0;
+  if (!(off >= 0 && off <= 5000) || (cur && String(off) !== cur)) fail(400, 'bad-request');
+  const me = viewer ? viewer.id : '';
+  const q = 'SELECT u.id, u.username, u.name, u.avatar, (SELECT 1 FROM follows x WHERE x.follower_id = ?1 AND x.followee_id = u.id) AS iFollow FROM follows f JOIN users u ON u.id = ' +
+    (followers ? 'f.follower_id WHERE f.followee_id = ?2' : 'f.followee_id WHERE f.follower_id = ?2') + ' AND u.username IS NOT NULL ORDER BY f.at DESC, u.id DESC LIMIT ?3 OFFSET ?4';
+  let rows;
+  try { rows = (await env.DB.prepare(q).bind(me, row.id, size + 1, off).all()).results || []; }
+  catch (e) { console.error('follow list', e && e.message ? e.message : e); return json({ users: [], cursor: null, done: true }); }
+  const done = rows.length <= size;
+  return json({ users: rows.slice(0, size).map((r) => ({ uid: r.id, username: r.username, name: r.name || 'Member', avatar: r.avatar || 0, iFollow: !!r.iFollow, isMe: r.id === me })), cursor: done ? null : String(off + size), done });
 }
 
 // The app's own page (index.html), fetched without the browser's "has it changed?" headers so the answer is always a full page.

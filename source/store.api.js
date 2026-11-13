@@ -199,6 +199,9 @@ export function createStore(fbConfig) {
     async listUserPosts(username, o) { return userList(username, 'posts', o); },
     async listUserReplies(username, o) { return userList(username, 'replies', o); },
     async listUserLikes(username, o) { return userList(username, 'likes', o); },
+    async listFollowers(username, o) { return userList(username, 'followers', o); },
+    async listFollowing(username, o) { return userList(username, 'following', o); },
+    async follow(username, on) { return call(on ? 'PUT' : 'DELETE', '/api/users/' + encodeURIComponent(username) + '/follow', on ? {} : undefined); },
     async listPosts({ sort, after, size }) {
       const q = new URLSearchParams({ sort: sort === 'top' ? 'top' : 'new', size: String(size || 20) });
       if (after) q.set('cursor', after);

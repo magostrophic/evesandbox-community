@@ -24,6 +24,7 @@ You do five things: make a free Firebase project for the sign-in, create the D1 
 | `worker/index.js` | The server code: sign-in check, posts, replies, votes, pictures, profiles. |
 | `schema.sql` | The database tables. You paste it into D1 once (step 3). |
 | `migration-profiles.sql` | Only for a database you created **before** profiles existed (see step 3). |
+| `migration-follows.sql` | Only for a database you created **before** followers existed: adds the follow table (see step 5b). |
 | `wrangler.jsonc` | **The only file you edit.** Project name, your three Firebase values, your D1 ID, the R2 bucket, the address. |
 | `source/` | The readable page code. You never need it to deploy. |
 
@@ -100,6 +101,8 @@ Your domain evesandbox.com must already be on this Cloudflare account (it is). Y
 4. Open the **Console** tab of the database. Open `schema.sql` from this folder, copy **all** of it, paste it in the console and press **Execute**. It should say the queries ran. (It is safe to run twice.)
 5. **Only if you already set the Community up before profiles existed:** your tables already exist, so `schema.sql` will not add the new columns. In the same Console paste and run `migration-profiles.sql` **once** (running it twice gives a harmless "duplicate column" error). If you are setting up for the first time, skip this.
 
+5b. **Only if your database already existed before followers were added:** in the same Console, paste the contents of `migration-follows.sql` and run it once (it creates one small table). Until you do, everything else keeps working, but Follow will say it is not available yet and the follower counts stay at 0. A brand new database already gets this table from `schema.sql`.
+
 ## 4. Create the R2 bucket for pictures
 
 1. Dashboard, then **R2 object storage**, then **Create bucket**.
@@ -109,7 +112,7 @@ Your domain evesandbox.com must already be on this Cloudflare account (it is). Y
 ## 5. Put the Community on GitHub
 
 1. On github.com create a **new repository** named `evesandbox-community`. A **private** one is fine.
-2. Upload the **contents** of this folder: `public`, `worker`, `source`, `schema.sql`, `migration-profiles.sql`, `wrangler.jsonc`, `COMMUNITY-SETUP.md`, `README.md`. Use **Add file**, then **Upload files**, then **Commit changes**. Check that your edited `wrangler.jsonc` (with the three Firebase values and the database ID) is the one uploaded, and that the `worker` folder arrived with `index.js` inside.
+2. Upload the **contents** of this folder: `public`, `worker`, `source`, `schema.sql`, `migration-profiles.sql`, `migration-follows.sql`, `wrangler.jsonc`, `COMMUNITY-SETUP.md`, `README.md`. Use **Add file**, then **Upload files**, then **Commit changes**. Check that your edited `wrangler.jsonc` (with the three Firebase values and the database ID) is the one uploaded, and that the `worker` folder arrived with `index.js` inside.
 
 ## 6. Create the Cloudflare project
 

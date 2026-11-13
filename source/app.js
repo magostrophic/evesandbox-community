@@ -54,6 +54,8 @@ function ago(ms) {
   if (s < 86400 * 30) return Math.round(s / 86400) + 'd ago';
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
+// 999 stays 999, 1200 becomes 1.2K, 3400000 becomes 3.4M.
+const ng = (n) => { n = Number(n) || 0; if (n < 1000) return String(n); const u = n < 1e6 ? [1e3, 'K'] : [1e6, 'M'], v = Math.floor(n / u[0] * 10) / 10; return (v >= 100 ? String(Math.floor(v)) : String(v)) + u[1]; };
 const full = (ms) => (ms ? new Date(ms).toLocaleString() : '');
 function hue(s) { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x % 360; }
 function avatar(uid, name, size, ver) {
@@ -130,6 +132,9 @@ const MSG = {
   'bad-youtube': 'YouTube: type your @handle or channel link.',
   'bad-website': 'Website: use a full https:// address.',
   'avatar-too-big': 'A profile picture can be 3 MB at most.',
+  'self-follow': 'You can not follow yourself.',
+  'follow-limit': 'You are following the most people allowed (5000). Unfollow someone first.',
+  'follow-not-ready': 'Following is not available yet. Please try again later.',
   'reserved-name': 'Please choose another name.',
   forbidden: 'You are not allowed to do that.',
   'not-found': 'That was not found. It may have been deleted.',
@@ -945,6 +950,50 @@ export function start(store, cfg) {
     } catch (e) { /* use the original */ }
     return f;
   }
+  // The people who follow a member, or whom a member follows, in a window: picture, name, @username (opens their profile) and a Follow button.
+  function followBox(pf, kind, onChange) {
+    modal((box, close) => {
+      box.classList.add('edit', 'flist');
+      const followers = kind === 'followers';
+      const x = h('button', { class: 'mx', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 20));
+      const rows = h('div', { class: 'frows' }), more = h('button', { class: 'btn more', type: 'button', text: 'Load more' }), stat = h('p', { class: 'mute center', 'aria-live': 'polite' });
+      let cursor = null, done = false, loading = false, count = 0;
+      const row = (u) => {
+        const link = h('a', { class: 'fuser', href: '/id/' + u.username }, avatar(u.uid, u.name, 44, u.avatar), h('span', { class: 'ftxt' }, h('b', { text: u.name }), h('span', { class: 'mute sm', text: '@' + u.username })));
+        link.onclick = (ev) => { if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button) return; ev.preventDefault(); close(); go('/id/' + u.username); };
+        let btn = null;
+        if (!u.isMe) {
+          btn = h('button', { class: 'btn sm' + (u.iFollow ? '' : ' pri'), type: 'button', text: u.iFollow ? 'Following' : 'Follow' });
+          btn.onclick = () => needUser(async () => {
+            if (btn.disabled) return; btn.disabled = true;
+            try {
+              const r = await store.follow(u.username, !u.iFollow);
+              u.iFollow = r.following; btn.textContent = u.iFollow ? 'Following' : 'Follow'; btn.classList.toggle('pri', !u.iFollow);
+              onChange();
+            } catch (e) { toast(errText(e), true); }
+            btn.disabled = false;
+          });
+        }
+        return h('div', { class: 'frow' }, link, btn);
+      };
+      const draw = () => {
+        const none = !count && done && !loading;
+        if (none) rows.replaceChildren(h('p', { class: 'fe mute', text: followers ? (me && me.uid === pf.uid ? 'Nobody follows you yet.' : pf.name + ' has no followers yet.') : (me && me.uid === pf.uid ? 'You are not following anyone yet.' : pf.name + ' is not following anyone yet.') }));
+        more.hidden = done; stat.textContent = loading ? 'Loading...' : '';
+      };
+      async function load() {
+        if (loading) return; loading = true; draw();
+        try {
+          const r = await (followers ? store.listFollowers : store.listFollowing).call(store, pf.username, { after: cursor, size: 30 });
+          (r.users || []).forEach((u) => rows.append(row(u))); count += (r.users || []).length; cursor = r.cursor; done = r.done;
+        } catch (e) { toast(errText(e), true); done = true; }
+        loading = false; draw();
+      }
+      more.onclick = load;
+      box.append(h('div', { class: 'mhead' }, h('h3', { text: followers ? 'Followers' : 'Following' }), x), h('div', { class: 'mbody' }, rows, stat, h('div', { class: 'center' }, more)));
+      load();
+    });
+  }
   function editBox(pf, done) {
     modal((box, close) => {
       box.classList.add('wide');
@@ -1031,12 +1080,27 @@ export function start(store, cfg) {
         const chips = linkChips(pf.links || {});
         const edit = isMe() ? h('button', { class: 'btn sm', type: 'button' }, icon('edit', 15, 2.2), ' Edit profile') : null;
         if (edit) edit.onclick = () => editBox(pf, drawHead);
+        // Follow / Following for everyone but the owner. Signed-out visitors are asked to sign in first.
+        const fbtn = isMe() ? null : h('button', { class: 'btn sm' + (pf.iFollow ? '' : ' pri'), type: 'button', text: pf.iFollow ? 'Following' : 'Follow', 'aria-pressed': String(!!pf.iFollow) });
+        if (fbtn) fbtn.onclick = () => needUser(async () => {
+          if (isMe() || fbtn.disabled) return;
+          fbtn.disabled = true;
+          try { const r = await store.follow(pf.username, !pf.iFollow); pf.iFollow = r.following; pf.counts.followers = r.followers; }
+          catch (e) { toast(errText(e), true); }
+          drawHead();
+        });
+        // The picture opens large (zoom, drag, close) like on Instagram. A letter avatar has nothing to enlarge.
+        const av = avatar(pf.uid, pf.name, 84, pf.avatar);
+        const avEl = pf.avatar ? h('button', { class: 'avbtn', type: 'button', 'aria-label': 'View profile picture of ' + pf.name, onclick: () => openViewer(['/img/a/' + pf.uid + '?v=' + pf.avatar], 0) }, av) : av;
+        const stat = (n, label, kind) => h('button', { class: 'pstat', type: 'button', onclick: () => followBox(pf, kind, refreshCounts) }, h('b', { text: ng(n) }), ' ' + label);
         head.replaceChildren(...[
-          h('div', { class: 'prow' }, avatar(pf.uid, pf.name, 84, pf.avatar), h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute', text: '@' + pf.username }), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) })), edit),
+          h('div', { class: 'prow' }, avEl, h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute' }, '@' + pf.username, pf.followsMe ? h('span', { class: 'fy', text: 'Follows you' }) : null), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) })), h('div', { class: 'pact' }, fbtn, edit)),
           pf.bio ? h('p', { class: 'pbio' }, rich(pf.bio)) : null,
           chips.length ? h('div', { class: 'lchips' }, chips) : null,
-          h('div', { class: 'pstats' }, h('span', {}, h('b', { text: String(pf.counts.posts) }), ' posts'), h('span', {}, h('b', { text: String(pf.counts.replies) }), ' replies'), pf.counts.likes != null ? h('span', {}, h('b', { text: String(pf.counts.likes) }), ' liked') : null)].filter(Boolean));
+          h('div', { class: 'pstats' }, h('span', {}, h('b', { text: ng(pf.counts.posts) }), ' posts'), stat(pf.counts.followers || 0, 'followers', 'followers'), stat(pf.counts.following || 0, 'following', 'following'), h('span', {}, h('b', { text: ng(pf.counts.replies) }), ' replies'), pf.counts.likes != null ? h('span', {}, h('b', { text: ng(pf.counts.likes) }), ' liked') : null)].filter(Boolean));
       };
+      // After someone is followed or unfollowed in a list, the numbers on this profile are fetched again.
+      const refreshCounts = () => store.getProfile(pf.username).then((p) => { if (p && my === seq) { pf.counts = p.counts; pf.iFollow = p.iFollow; pf.followsMe = p.followsMe; drawHead(); } }).catch(() => {});
       const kinds = [['posts', 'Posts', '/id/' + pf.username], ['replies', 'Replies', '/id/' + pf.username + '?tab=replies'], ['liked', 'Liked posts', '/id/' + pf.username + '?tab=liked']];
       const tabs = h('div', { class: 'tabs ptabs' }, kinds.map((k) => h('a', { class: 'tab' + (tab === k[0] ? ' on' : ''), href: k[2], text: k[1] })));
       const list = h('div', { class: 'plist' }), more = h('button', { class: 'btn more', type: 'button', text: 'Load more' }), stat = h('p', { class: 'mute center' });
