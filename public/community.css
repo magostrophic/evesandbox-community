@@ -319,3 +319,17 @@ html.mlock body{padding-right:var(--sbw,0)}
   .mback.signin .gbtn{padding:9px}
   .mback.signin .fine{margin:8px 0 0!important}
 }
+
+/* profile: socials on their own row, stats in a tidy row of cells with icons */
+.lchips{margin-top:14px;gap:8px}
+.lchip{padding:7px 13px 7px 10px;gap:7px;border:.5px solid var(--line);background:var(--bg);transition:background .15s,border-color .15s}
+.lchip:hover{background:var(--fill)}.lchip:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.lchip .ic{display:inline-flex;color:var(--brand);flex:none}
+.pstats{display:flex;gap:4px;margin-top:14px;padding-top:12px;border-top:.5px solid var(--line);color:var(--mute);flex-wrap:nowrap}
+.pcell{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 2px;border-radius:12px;text-align:center;font:inherit;color:var(--mute)}
+.pcell .ic{display:flex;color:var(--mute);margin-bottom:2px}
+.pcell .pn{display:block;font-size:1.12rem;line-height:1.2;color:var(--ink);letter-spacing:-.01em}
+.pcell .pl{display:block;font-size:.76rem;line-height:1.2;white-space:nowrap}
+button.pcell{border:0;background:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button.pcell:hover{background:var(--fill)}button.pcell:hover .ic{color:var(--brand)}
+@media (max-width:420px){.pstats{gap:0}.pcell .pn{font-size:1rem}.pcell .pl{font-size:.7rem}}

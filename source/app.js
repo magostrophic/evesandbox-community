@@ -21,6 +21,14 @@ const ICONS = {
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  posts: '<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  followers: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.6"/><path d="M17.5 14.2a5 5 0 0 1 4 4.8"/>',
+  following: '<circle cx="9" cy="8" r="3.8"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 11l2 2 4-4"/>',
+  instagram: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.3" cy="6.7" r=".6"/>',
+  youtube: '<rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="M10 9.2v5.6l4.8-2.8z"/>',
+  xsite: '<path d="M4 4l11.7 16H20L8.3 4z"/><path d="M4 20l6.8-6.8M13.2 10.8L20 4"/>',
+  discord: '<path d="M7.5 7.5h9a4 4 0 0 1 4 4v3.2a3 3 0 0 1-5 2.2l-1-1.2H9.5l-1 1.2a3 3 0 0 1-5-2.2v-3.2a4 4 0 0 1 4-4z"/><circle cx="9.2" cy="12.3" r="1"/><circle cx="14.8" cy="12.3" r="1"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'
 };
 function icon(n, s = 18, w = 2) {
@@ -940,15 +948,15 @@ export function start(store, cfg) {
   // ---------- profiles ----------
   function linkChips(links) {
     const out = [];
-    const ext = (label, val, href) => h('a', { class: 'lchip', href, target: '_blank', rel: 'noopener noreferrer nofollow ugc' }, h('b', { text: label }), val ? ' ' + val : '');
-    if (links.instagram) out.push(ext('Instagram', '@' + links.instagram, 'https://instagram.com/' + encodeURIComponent(links.instagram)));
+    const ext = (label, val, href, ic) => h('a', { class: 'lchip', href, target: '_blank', rel: 'noopener noreferrer nofollow ugc' }, icon(ic, 17, 2), h('b', { text: label }), val ? ' ' + val : '');
+    if (links.instagram) out.push(ext('Instagram', '@' + links.instagram, 'https://instagram.com/' + encodeURIComponent(links.instagram), 'instagram'));
     if (links.discord) {
-      if (/^discord\.gg\/[A-Za-z0-9-]+$/.test(links.discord)) out.push(ext('Discord', 'invite', 'https://' + links.discord));
-      else { const b = h('button', { class: 'lchip', type: 'button', title: 'Copy Discord username' }, h('b', { text: 'Discord' }), ' ' + links.discord); b.onclick = () => copyText(links.discord, 'Discord username copied'); out.push(b); }
+      if (/^discord\.gg\/[A-Za-z0-9-]+$/.test(links.discord)) out.push(ext('Discord', 'invite', 'https://' + links.discord, 'discord'));
+      else { const b = h('button', { class: 'lchip', type: 'button', title: 'Copy Discord username' }, icon('discord', 17, 2), h('b', { text: 'Discord' }), ' ' + links.discord); b.onclick = () => copyText(links.discord, 'Discord username copied'); out.push(b); }
     }
-    if (links.x) out.push(ext('X', '@' + links.x, 'https://x.com/' + encodeURIComponent(links.x)));
-    if (links.youtube) out.push(ext('YouTube', '@' + links.youtube, 'https://youtube.com/@' + encodeURIComponent(links.youtube)));
-    if (links.website && /^https:\/\//.test(links.website)) { let host = 'link'; try { host = new URL(links.website).hostname; } catch (e) { /* keep */ } out.push(ext('Website', host, links.website)); }
+    if (links.x) out.push(ext('X', '@' + links.x, 'https://x.com/' + encodeURIComponent(links.x), 'xsite'));
+    if (links.youtube) out.push(ext('YouTube', '@' + links.youtube, 'https://youtube.com/@' + encodeURIComponent(links.youtube), 'youtube'));
+    if (links.website && /^https:\/\//.test(links.website)) { let host = 'link'; try { host = new URL(links.website).hostname; } catch (e) { /* keep */ } out.push(ext('Website', host, links.website, 'globe')); }
     return out;
   }
   // Cuts the middle square out of the picture and shrinks it to 512 px. This also drops any hidden photo details.
@@ -1108,12 +1116,14 @@ export function start(store, cfg) {
         // The picture opens large (zoom, drag, close) like on Instagram. A letter avatar has nothing to enlarge.
         const av = avatar(pf.uid, pf.name, 84, pf.avatar);
         const avEl = pf.avatar ? h('button', { class: 'avbtn', type: 'button', 'aria-label': 'View profile picture of ' + pf.name, onclick: () => openViewer(['/img/a/' + pf.uid + '?v=' + pf.avatar], 0) }, av) : av;
-        const stat = (n, label, kind) => h('button', { class: 'pstat', type: 'button', onclick: () => followBox(pf, kind, refreshCounts) }, h('b', { text: ng(n) }), ' ' + label);
+        const cell = (ic, n, label) => [icon(ic, 19, 1.9), h('b', { class: 'pn', text: ng(n) }), h('span', { class: 'pl', text: label })];
+        const stat = (ic, n, label, kind) => h('button', { class: 'pcell pstat', type: 'button', onclick: () => followBox(pf, kind, refreshCounts) }, cell(ic, n, label));
+        const plain = (ic, n, label) => h('div', { class: 'pcell' }, cell(ic, n, label));
         head.replaceChildren(...[
           h('div', { class: 'prow' }, avEl, h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute' }, '@' + pf.username, pf.followsMe ? h('span', { class: 'fy', text: 'Follows you' }) : null), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) })), h('div', { class: 'pact' }, fbtn, edit)),
           pf.bio ? h('p', { class: 'pbio' }, rich(pf.bio)) : null,
-          chips.length ? h('div', { class: 'lchips' }, chips) : null,
-          h('div', { class: 'pstats' }, h('span', {}, h('b', { text: ng(pf.counts.posts) }), ' posts'), stat(pf.counts.followers || 0, 'followers', 'followers'), stat(pf.counts.following || 0, 'following', 'following'), h('span', {}, h('b', { text: ng(pf.counts.replies) }), ' replies'), pf.counts.likes != null ? h('span', {}, h('b', { text: ng(pf.counts.likes) }), ' liked') : null)].filter(Boolean));
+          chips.length ? h('div', { class: 'lchips', 'aria-label': 'Social links' }, chips) : null,
+          h('div', { class: 'pstats' }, plain('posts', pf.counts.posts, 'posts'), stat('followers', pf.counts.followers || 0, 'followers', 'followers'), stat('following', pf.counts.following || 0, 'following', 'following'), plain('chat', pf.counts.replies, 'replies'), pf.counts.likes != null ? plain('heart', pf.counts.likes, 'liked') : null)].filter(Boolean));
       };
       // After someone is followed or unfollowed in a list, the numbers on this profile are fetched again.
       const refreshCounts = () => store.getProfile(pf.username).then((p) => { if (p && my === seq) { pf.counts = p.counts; pf.iFollow = p.iFollow; pf.followsMe = p.followsMe; drawHead(); } }).catch(() => {});
