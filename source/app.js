@@ -200,6 +200,17 @@ export function start(store, cfg) {
     setTimeout(() => e.classList.add('on'), 10);
     setTimeout(() => { e.classList.remove('on'); setTimeout(() => e.remove(), 300); }, 3200);
   }
+  // Freeze the page behind any open dialog (scrolling, wheel and touch) and keep the layout from jumping when the scrollbar disappears.
+  (function lockWatch() {
+    const root = document.documentElement;
+    const sync = () => {
+      const on = !!document.querySelector('.mback');
+      if (on === root.classList.contains('mlock')) return;
+      if (on) { const w = window.innerWidth - root.clientWidth; root.style.setProperty('--sbw', (w > 0 ? w : 0) + 'px'); }
+      root.classList.toggle('mlock', on);
+    };
+    new MutationObserver(sync).observe(document.body, { childList: true });
+  })();
   function modal(build) {
     const close = () => { back.remove(); document.removeEventListener('keydown', esc); };
     const esc = (ev) => { if (ev.key === 'Escape') close(); };
@@ -210,6 +221,9 @@ export function start(store, cfg) {
     back.addEventListener('pointerdown', (ev) => { downOnBack = ev.target === back; upOnBack = false; });
     back.addEventListener('pointerup', (ev) => { upOnBack = ev.target === back; });
     back.addEventListener('click', (ev) => { const ok = downOnBack && upOnBack && ev.target === back; downOnBack = upOnBack = false; if (ok) close(); });
+    // On touch screens, dragging on the dark area must not scroll the page underneath.
+    back.addEventListener('touchmove', (ev) => { if (ev.target === back) ev.preventDefault(); }, { passive: false });
+    back.addEventListener('wheel', (ev) => { if (ev.target === back) ev.preventDefault(); }, { passive: false });
     build(box, close);
     document.body.append(back);
     document.addEventListener('keydown', esc);
@@ -260,6 +274,8 @@ export function start(store, cfg) {
       const tabUp = h('button', { class: 'tab', type: 'button', role: 'tab', text: 'Create account' });
       const tabs = h('div', { class: 'tabs2', role: 'tablist' }, tabIn, tabUp);
       const title = h('h3', { text: 'Join the community' });
+      const xbtn = h('button', { class: 'mx', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 20));
+      const shead = h('div', { class: 'shead' }, title, xbtn);
 
       function setMode(m) {
         mode = m; clear(); resend.hidden = true;
@@ -327,7 +343,7 @@ export function start(store, cfg) {
         go2);
 
       const slot = h('div', { class: 'gslot' }, h('p', { class: 'mute center', text: 'Loading...' }));
-      box.append(title, tabs, form,
+      box.append(shead, tabs, form,
         h('div', { class: 'or' }, h('span', { text: 'or' })),
         slot,
         h('p', { class: 'fine' }, 'By continuing you agree to the ', h('a', { href: SITE + '/terms/', target: '_blank', rel: 'noopener', text: 'Terms' }), ' and ', h('a', { href: SITE + '/privacy/', target: '_blank', rel: 'noopener', text: 'Privacy' }), '.'));

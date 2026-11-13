@@ -297,3 +297,25 @@ img{-webkit-touch-callout:none;-webkit-user-drag:none}
 .fe{padding:28px 8px;text-align:center;margin:0}
 .mbox.flist{max-width:420px}
 @media (max-width:600px){.pstats{gap:14px}}
+
+/* page behind a dialog stays still; sign-in close button; compact sign-in on phones */
+html.mlock,html.mlock body{overflow:hidden}
+html.mlock body{padding-right:var(--sbw,0)}
+.mbox{overscroll-behavior:contain}
+.shead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-8px -10px -4px 0}
+.shead h3{margin:0}
+@media (max-width:600px){
+  .mback.signin{padding:14px;align-items:center}
+  .mback.signin .mbox{max-width:340px;padding:14px 16px 16px;border-radius:18px}
+  .mback.signin .shead{margin:-6px -8px -2px 0}
+  .mback.signin .shead h3{font-size:1.1rem}
+  .mback.signin .mx{width:40px;height:40px}
+  .mback.signin .tabs2{margin:6px 0 2px}
+  .mback.signin .fl2{margin:8px 0 2px}
+  .mback.signin input[type=email],.mback.signin input[type=password]{padding:9px 12px}
+  .mback.signin .btn.full{margin-top:10px;padding:9px 16px}
+  .mback.signin .or{margin:10px 0 0}
+  .mback.signin .gslot{margin-top:8px;min-height:40px}
+  .mback.signin .gbtn{padding:9px}
+  .mback.signin .fine{margin:8px 0 0!important}
+}
