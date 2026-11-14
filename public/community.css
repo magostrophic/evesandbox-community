@@ -333,3 +333,5 @@ html.mlock body{padding-right:var(--sbw,0)}
 button.pcell{border:0;background:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
 button.pcell:hover{background:var(--fill)}button.pcell:hover .ic{color:var(--brand)}
 @media (max-width:420px){.pstats{gap:0}.pcell .pn{font-size:1rem}.pcell .pl{font-size:.7rem}}
+
+.fyrow{margin-top:6px}.fyrow .fy{margin-left:0}

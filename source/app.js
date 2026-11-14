@@ -1120,7 +1120,7 @@ export function start(store, cfg) {
         const stat = (ic, n, label, kind) => h('button', { class: 'pcell pstat', type: 'button', onclick: () => followBox(pf, kind, refreshCounts) }, cell(ic, n, label));
         const plain = (ic, n, label) => h('div', { class: 'pcell' }, cell(ic, n, label));
         head.replaceChildren(...[
-          h('div', { class: 'prow' }, avEl, h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute' }, '@' + pf.username, pf.followsMe ? h('span', { class: 'fy', text: 'Follows you' }) : null), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) })), h('div', { class: 'pact' }, fbtn, edit)),
+          h('div', { class: 'prow' }, avEl, h('div', { class: 'pinfo' }, h('h1', { class: 'pname', text: pf.name }), h('div', { class: 'mute' }, '@' + pf.username), h('div', { class: 'mute sm', text: 'Joined ' + joined(pf.createdAt) }), pf.followsMe ? h('div', { class: 'fyrow' }, h('span', { class: 'fy', text: 'Follows you' })) : null), h('div', { class: 'pact' }, fbtn, edit)),
           pf.bio ? h('p', { class: 'pbio' }, rich(pf.bio)) : null,
           chips.length ? h('div', { class: 'lchips', 'aria-label': 'Social links' }, chips) : null,
           h('div', { class: 'pstats' }, plain('posts', pf.counts.posts, 'posts'), stat('followers', pf.counts.followers || 0, 'followers', 'followers'), stat('following', pf.counts.following || 0, 'following', 'following'), plain('chat', pf.counts.replies, 'replies'), pf.counts.likes != null ? plain('heart', pf.counts.likes, 'liked') : null)].filter(Boolean));
