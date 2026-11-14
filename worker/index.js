@@ -149,7 +149,7 @@ const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
 // ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
-const BUILD = '2026-11-13';
+const BUILD = '2026-11-14';
 async function ping(env, url) {
   const checks = {};
   const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
@@ -180,8 +180,14 @@ async function ping(env, url) {
     else {
       const c = await postCard(env, url.origin, p);
       preview = { found: true, address: c.url, title: c.title, description: c.desc, picture: c.image, card: c.big ? 'large picture card' : 'small card with the logo' };
+      if (c.imgInfo) {
+        preview.pictureKB = Math.round(c.imgInfo.size / 1024); preview.pictureType = c.imgInfo.type || 'none';
+        preview.pictureSize = c.imgInfo.w && c.imgInfo.h ? c.imgInfo.w + ' x ' + c.imgInfo.h : 'unknown';
+        preview.smallCopy = /\/p$/.test(c.image) ? 'yes' : 'no (original picture is used)';
+        if (c.imgInfo.size > 300 * 1024) preview.warning = 'This picture is over 300 KB, so WhatsApp will not show it in the preview. Other apps are fine.';
+      }
       if (p.img_count > 0) {
-        try { const o = await env.IMAGES.head(p.id + '/0'); preview.pictureStored = !!o; if (o) { preview.pictureKB = Math.round(o.size / 1024); preview.pictureType = (o.httpMetadata && o.httpMetadata.contentType) || 'none'; } }
+        try { const o = await env.IMAGES.head(p.id + '/0'); preview.pictureStored = !!o; if (o) preview.originalKB = Math.round(o.size / 1024); }
         catch (e) { preview.pictureStored = 'problem'; }
       }
     }
@@ -364,6 +370,42 @@ function sniff(b) {
   return null;
 }
 
+// Width and height of a picture, read from its first bytes (PNG, JPEG, GIF, WebP). Chat apps want these in the card; null if unreadable.
+function dims(b) {
+  try {
+    const t = sniff(b);
+    if (t === 'image/png' && b.length > 24) return { w: ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) >>> 0, h: ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]) >>> 0 };
+    if (t === 'image/gif') return { w: b[6] | (b[7] << 8), h: b[8] | (b[9] << 8) };
+    if (t === 'image/webp') {
+      const k = String.fromCharCode(b[12], b[13], b[14], b[15]);
+      if (k === 'VP8X') return { w: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), h: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) };
+      if (k === 'VP8L') { const v = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24); return { w: 1 + (v & 0x3fff), h: 1 + ((v >>> 14) & 0x3fff) }; }
+      if (k === 'VP8 ') return { w: (b[26] | (b[27] << 8)) & 0x3fff, h: (b[28] | (b[29] << 8)) & 0x3fff };
+    }
+    if (t === 'image/jpeg') {
+      let i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) { i++; continue; }
+        const m = b[i + 1];
+        if (m === 0xff) { i++; continue; }
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: (b[i + 5] << 8) | b[i + 6], w: (b[i + 7] << 8) | b[i + 8] };
+        i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+      }
+    }
+  } catch (e) { /* unreadable */ }
+  return null;
+}
+// What a chat app needs to know about a stored picture: size on disk, type, width and height. null if it is not there.
+async function imgMeta(env, key) {
+  try {
+    const o = await env.IMAGES.get(key, { range: { offset: 0, length: 65536 } });
+    if (!o) return null;
+    const d = dims(new Uint8Array(await o.arrayBuffer()));
+    return { size: o.size, type: (o.httpMetadata && o.httpMetadata.contentType) || '', w: d && d.w > 0 ? d.w : 0, h: d && d.h > 0 ? d.h : 0 };
+  } catch (e) { console.error('picture info', e && e.message ? e.message : e); return null; }
+}
+const PREVIEW_MAX = 400 * 1024;   // the small copy of a post's first picture that link previews use (WhatsApp ignores pictures over about 300 KB)
+
 async function createPost(req, env) {
   const u = await needWriter(env, req);
   const cl = Number(req.headers.get('content-length') || 0);
@@ -384,6 +426,13 @@ async function createPost(req, env) {
     if (!type) fail(400, 'bad-image');
     imgs.push({ buf, type }); bytes += buf.length;
   }
+  // Optional small copy of the first picture, made by the page, used only for link previews. Anything wrong with it is ignored, never an error.
+  let prev = null;
+  const pf = form.get('preview');
+  if (imgs.length && pf && typeof pf === 'object' && typeof pf.arrayBuffer === 'function' && pf.size > 0 && pf.size <= PREVIEW_MAX) {
+    const pb = new Uint8Array(await pf.arrayBuffer());
+    if (sniff(pb) === 'image/jpeg') prev = pb;
+  }
   const now = Date.now();
   const last = await env.DB.prepare('SELECT created FROM posts WHERE author_id = ? ORDER BY created DESC LIMIT 1').bind(u.id).first();
   if (last && now - last.created < GAP.post) fail(429, 'slow-down');
@@ -398,6 +447,7 @@ async function createPost(req, env) {
     for (let i = 0; i < imgs.length; i++) {
       await env.IMAGES.put(id + '/' + i, imgs[i].buf, { httpMetadata: { contentType: imgs[i].type, cacheControl: 'public, max-age=31536000, immutable' } });
     }
+    if (prev) { try { await env.IMAGES.put(id + '/p', prev, { httpMetadata: { contentType: 'image/jpeg', cacheControl: 'public, max-age=31536000, immutable' } }); } catch (e) { console.error('preview copy', e && e.message ? e.message : e); } }
     await env.DB.prepare('INSERT INTO posts (id, author_id, title, body, img_count, img_bytes, created) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, u.id, title, body, imgs.length, bytes, now).run();
   } catch (e) {
     if (!(await env.DB.prepare('SELECT 1 FROM posts WHERE id = ?').bind(id).first())) await dropImages(env, id, imgs.length);
@@ -408,6 +458,7 @@ async function createPost(req, env) {
 
 async function dropImages(env, id, n) {
   const keys = []; for (let i = 0; i < Math.max(n, 0); i++) keys.push(id + '/' + i);
+  if (n > 0) keys.push(id + '/p');
   if (keys.length) { try { await env.IMAGES.delete(keys); } catch (e) { console.error('r2 delete', e); } }
 }
 
@@ -426,7 +477,7 @@ async function deleteAccount(req, env, url) {
   const keys = ['a/' + u.id];
   if (wantMedia) {
     const posts = (await env.DB.prepare('SELECT id, img_count FROM posts WHERE author_id = ?').bind(id).all()).results || [];
-    posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); });
+    posts.forEach((r) => { for (let i = 0; i < r.img_count; i++) keys.push(r.id + '/' + i); if (r.img_count > 0) keys.push(r.id + '/p'); });
   }
   // Their follows go too (kept apart so erasing an account still works if the follow table was never created).
   try { await env.DB.prepare('DELETE FROM follows WHERE follower_id = ?1 OR followee_id = ?1').bind(id).run(); } catch (e) { console.error('follows cleanup', e && e.message ? e.message : e); }
@@ -745,6 +796,8 @@ function withCard(html, c) {
     '<meta property="og:description" content="' + desc + '">' +
     '<meta property="og:url" content="' + url + '">' +
     '<meta property="og:image" content="' + img + '">' +
+    (c.imgInfo && c.imgInfo.w > 0 && c.imgInfo.h > 0 ? '<meta property="og:image:width" content="' + c.imgInfo.w + '"><meta property="og:image:height" content="' + c.imgInfo.h + '">' : '') +
+    (c.imgInfo && /^image\/(jpeg|png|gif|webp)$/.test(c.imgInfo.type) ? '<meta property="og:image:type" content="' + c.imgInfo.type + '">' : '') +
     '<meta property="og:image:alt" content="' + alt + '">' +
     '<meta name="twitter:card" content="' + (c.big ? 'summary_large_image' : 'summary') + '">' +
     '<meta name="twitter:title" content="' + title + '">' +
@@ -795,7 +848,9 @@ async function profilePage(req, env, url) {
   const { row } = await cardRow(env, 'SELECT id, username, name, bio, avatar FROM users WHERE username = ?', m[1].toLowerCase());
   let html = await base.text();
   if (row) {
+    const av = row.avatar ? await imgMeta(env, 'a/' + row.id) : null;
     html = withCard(html, {
+      imgInfo: av,
       title: 'Eve Sandbox - ' + (row.name || 'Member') + ' (@' + row.username + ')',
       desc: descOf(row.bio, 'A member of the Eve Sandbox Community.'),
       url: url.origin + '/id/' + row.username,
@@ -808,7 +863,7 @@ async function profilePage(req, env, url) {
 
 // ---------- pictures ----------
 async function image(req, env, url) {
-  const m = url.pathname.match(/^\/img\/([a-z0-9]{8})\/([0-3])$/), av = url.pathname.match(/^\/img\/a\/([a-z0-9]{12})$/);
+  const m = url.pathname.match(/^\/img\/([a-z0-9]{8})\/([0-3p])$/), av = url.pathname.match(/^\/img\/a\/([a-z0-9]{12})$/);
   if ((!m && !av) || (req.method !== 'GET' && req.method !== 'HEAD')) return new Response('Not found', { status: 404, headers: BASE_H });
   // A picture is only for showing inside the community's pages. Opening its address as a page (new tab, "Open image in new tab") is refused.
   const dest = (req.headers.get('sec-fetch-dest') || '').toLowerCase();
@@ -835,11 +890,18 @@ const POST_CARD_SQL = 'SELECT p.id, p.title, p.body, p.img_count, p.created, p.r
 // What a chat app is shown for one post. Used for the real page and for the check at /api/ping?post=<id>, so both always agree.
 async function postCard(env, origin, p) {
   const has = p.img_count > 0;
+  // Link previews use the small copy of the first picture when there is one (it is always light enough for every chat app); older posts use the original.
+  let pic = null, key = '0';
+  if (has) {
+    pic = await imgMeta(env, p.id + '/p');
+    if (pic) key = 'p'; else pic = await imgMeta(env, p.id + '/0');
+  }
   const c = {
     title: p.title.slice(0, 100) + ' - Eve Sandbox Community',
     desc: descOf(p.body, 'A post by ' + (p.aname || 'a deleted user') + ' in the Eve Sandbox Community.'),
     url: origin + '/p/' + p.id,
-    image: has ? origin + '/img/' + p.id + '/0' : await logoUrl(env, origin),
+    image: has ? origin + '/img/' + p.id + '/' + key : await logoUrl(env, origin),
+    imgInfo: has ? pic : null,
     imageAlt: has ? 'Picture from the post "' + p.title.slice(0, 80) + '"' : 'Eve Sandbox', type: 'article', big: has,
     index: true,
     ld: {

@@ -215,10 +215,11 @@ export function createStore(fbConfig) {
     async getMyVotes(uid, ids) { return (await call('GET', '/api/votes?ids=' + ids.join(','))).votes || {}; },
     async vote(uid, id, v) { const r = await call('PUT', '/api/posts/' + id + '/vote', { value: v }); return r && typeof r.score === 'number' ? r.score : null; },
     async getScores(ids, since) { return call('GET', '/api/scores?ids=' + ids.join(',') + (since === null || since === undefined ? '' : '&since=' + since), undefined, false, true); },
-    async createPost(uid, name, title, body, files) {
+    async createPost(uid, name, title, body, files, preview) {
       const f = new FormData();
       f.append('title', title); f.append('body', body);
       (files || []).forEach((x) => f.append('images', x, x.name || 'picture'));
+      if (preview) f.append('preview', preview, 'preview.jpg');
       return (await call('POST', '/api/posts', f, true)).id;
     },
     async deletePost(id) { await call('DELETE', '/api/posts/' + id); },

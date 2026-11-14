@@ -117,6 +117,25 @@ async function prepImage(f) {
   return f;
 }
 
+// A small, light copy of the first picture for link previews (chat apps such as WhatsApp skip pictures over about 300 KB). Never blocks posting.
+async function makePreview(f) {
+  if (!f || !window.createImageBitmap) return null;
+  try {
+    const bm = await createImageBitmap(f);
+    let blob = null;
+    for (const [edge, q] of [[1200, 0.8], [1200, 0.65], [1000, 0.6], [800, 0.55], [640, 0.5]]) {
+      const k = Math.min(1, edge / Math.max(bm.width, bm.height));
+      const w = Math.max(1, Math.round(bm.width * k)), hh = Math.max(1, Math.round(bm.height * k));
+      const c = document.createElement('canvas'); c.width = w; c.height = hh;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, hh); g.drawImage(bm, 0, 0, w, hh);
+      blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+      if (blob && blob.size > 0 && blob.size <= 250 * 1024) break;
+    }
+    if (bm.close) bm.close();
+    return blob && blob.size > 0 && blob.size <= 400 * 1024 ? blob : null;
+  } catch (e) { return null; }
+}
+
 const MSG = {
   unavailable: 'Could not reach the server. Check your internet and try again.',
   'security-check': 'A security check is needed. Reload the page and complete it, then try again.',
@@ -643,7 +662,7 @@ export function start(store, cfg) {
         postBtn.disabled = true; err.hidden = true;
         needUser(async () => {
           try {
-            const id = await store.createPost(me.uid, me.name, title, body, files.slice());
+            const id = await store.createPost(me.uid, me.name, title, body, files.slice(), files.length ? await makePreview(files[0]) : null);
             lastPost = Date.now(); feed.posts = []; feed.cursor = null; feed.done = false; clearFiles();
             toast('Posted'); go('/p/' + id);
           } catch (e) { postBtn.disabled = false; err.hidden = false; err.textContent = errText(e); }
