@@ -63,6 +63,7 @@ function ago(ms) {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 // 999 stays 999, 1200 becomes 1.2K, 3400000 becomes 3.4M.
+const editedMark = (p) => (p && p.edited ? h('span', { class: 'edt', text: 'edited', title: 'Edited ' + full(p.edited) }) : null);
 const ng = (n) => { n = Number(n) || 0; if (n < 1000) return String(n); const u = n < 1e6 ? [1e3, 'K'] : [1e6, 'M'], v = Math.floor(n / u[0] * 10) / 10; return (v >= 100 ? String(Math.floor(v)) : String(v)) + u[1]; };
 const full = (ms) => (ms ? new Date(ms).toLocaleString() : '');
 function hue(s) { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x % 360; }
@@ -143,6 +144,7 @@ const MSG = {
   'need-name': 'Choose a display name first (account menu, top right).',
   banned: 'This account can not post, reply or vote.',
   'slow-down': 'Please wait a little before posting again.',
+  'edit-not-ready': 'Editing is not available yet. Please try again later.',
   'daily-limit': 'You have reached today\u2019s limit. Please try again tomorrow.',
   'image-too-big': 'Each picture can be 5 MB at most.',
   'too-many-images': 'You can add up to 4 pictures.',
@@ -676,12 +678,44 @@ export function start(store, cfg) {
   }
 
   // ---------- views ----------
+  // Author changes the title and text of a post. Pictures cannot be changed. A real change shows "edited" on the post.
+  function editPostBox(p, done) {
+    modal((box, close) => {
+      box.classList.add('edit');
+      const err = h('p', { class: 'merr', hidden: true });
+      const t = h('input', { id: 'etitle', type: 'text', maxlength: '120', value: p.title, 'aria-label': 'Title', autocomplete: 'off' });
+      const b = h('textarea', { id: 'ebody', maxlength: '5000', rows: '9', 'aria-label': 'Text' }); b.value = p.body || '';
+      const bc = h('span', { class: 'mute', text: b.value.length + ' / 5000' }); b.oninput = () => { bc.textContent = b.value.length + ' / 5000'; };
+      const x = h('button', { class: 'mx', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 20));
+      const go2 = h('button', { class: 'btn pri', type: 'button', text: 'Save changes' });
+      go2.onclick = async () => {
+        const title = t.value.trim(), body = b.value.trim();
+        if (!title) { err.hidden = false; err.textContent = 'Give your post a title.'; return; }
+        err.hidden = true; go2.disabled = true;
+        try {
+          const r = await store.editPost(p.id, title, body);
+          if (r && r.changed) {
+            p.title = title; p.body = body; p.edited = r.edited || Date.now();
+            const f = feed.posts.find((q) => q.id === p.id); if (f && f !== p) { f.title = title; f.body = body; f.edited = p.edited; }
+            toast('Post updated');
+          } else toast('Nothing was changed');
+          close(); done();
+        } catch (e) { go2.disabled = false; err.hidden = false; err.textContent = errText(e); }
+      };
+      box.append(h('div', { class: 'mhead' }, h('h3', { text: 'Edit post' }), x),
+        h('div', { class: 'mbody' }, h('label', { class: 'fl2', for: 'etitle', text: 'Title' }), t, h('label', { class: 'fl2', for: 'ebody', text: 'Text' }), b, h('div', { class: 'crow' }, bc),
+          h('p', { class: 'fine', text: 'Pictures cannot be changed after posting. An edited post shows "edited".' }), err),
+        h('div', { class: 'mfoot' }, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close }), go2));
+      Promise.resolve().then(() => t.focus());
+    });
+  }
+
   function postCard(p) {
     const a = h('a', { class: 'pbody', href: '/p/' + p.id },
       h('h2', { class: 'pt', text: p.title }),
       p.body ? h('p', { class: 'ps', text: p.body.slice(0, 220) }) : null,
       p.images && p.images.length ? h('div', { class: 'pimgs' }, h('img', { src: p.images[0], alt: '', loading: 'lazy' }), p.images.length > 1 ? h('span', { class: 'more-n', text: '+' + (p.images.length - 1) }) : null) : null,
-      h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 20, p.authorAvatar), h('span', { text: p.authorName }), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }),
+      h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 20, p.authorAvatar), h('span', { text: p.authorName }), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), editedMark(p),
         h('span', { class: 'rc', 'data-pid': p.id }, icon('chat', 14, 2.2), ' ' + p.replyCount), h('span', { class: 'pid', text: '#' + p.id })));
     const card = h('article', { class: 'card post' }, voteCol(p, () => card.replaceWith(postCard(p))), a);
     return card;
@@ -909,13 +943,14 @@ export function start(store, cfg) {
       const drawHead = () => {
         const sh = h('button', { class: 'lnk', type: 'button' }, icon('share', 15, 2.2), ' Share'); sh.onclick = () => share(p);
         const rp = h('button', { class: 'lnk', type: 'button' }, icon('flag', 15, 2.2), ' Report'); rp.onclick = () => reportBox(p.id, '');
+        const ed = me && me.uid === p.authorId ? h('button', { class: 'lnk', type: 'button' }, icon('edit', 15, 2.2), ' Edit') : null; if (ed) ed.onclick = () => editPostBox(p, () => { current = p; document.title = 'Eve Sandbox - ' + p.title.slice(0, 60); drawHead(); });
         const dl = canDelete(p) ? h('button', { class: 'lnk', type: 'button' }, icon('trash', 15, 2.2), ' Delete') : null; if (dl) dl.onclick = () => removePost(p);
         const idc = h('button', { class: 'pid btnid', type: 'button', title: 'Copy post ID' }, '#' + p.id); idc.onclick = () => copyText(p.id, 'Post ID copied');
         head.replaceChildren(voteCol(p, drawHead), h('div', { class: 'pmain' },
-          h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), idc),
+          h('div', { class: 'meta' }, avatar(p.authorId, p.authorName, 24, p.authorAvatar), userLink(p.authorUser, p.authorName), h('span', { text: '·' }), h('span', { text: ago(p.createdAt), title: full(p.createdAt) }), editedMark(p), idc),
           h('h1', { class: 'ptitle', text: p.title }), p.body ? h('p', { class: 'pb' }, rich(p.body)) : null,
           p.images && p.images.length ? h('div', { class: 'gal n' + p.images.length }, p.images.map((u, i) => h('div', { class: 'gi', role: 'button', tabindex: '0', 'aria-label': 'View picture ' + (i + 1) + ' of ' + p.images.length, onclick: (ev) => { ev.preventDefault(); openViewer(p.images, i); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openViewer(p.images, i); } } }, h('img', { src: u, alt: 'Picture ' + (i + 1) + ' of ' + p.images.length, loading: 'lazy', draggable: 'false' })))) : null,
-          h('div', { class: 'acts' }, h('span', { class: 'rc', 'data-pid': p.id, 'data-long': '1' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, rp, dl)));
+          h('div', { class: 'acts' }, h('span', { class: 'rc', 'data-pid': p.id, 'data-long': '1' }, icon('chat', 15, 2.2), ' ' + p.replyCount + (p.replyCount === 1 ? ' reply' : ' replies')), sh, ed, rp, dl)));
       };
       const drawReplies = () => {
         rList.replaceChildren(...replies.map((r) => replyItem(p, r, (gone) => { const i = replies.findIndex((x) => x.id === gone); if (i >= 0) replies.splice(i, 1); drawReplies(); drawHead(); })));

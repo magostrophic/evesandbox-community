@@ -335,3 +335,6 @@ button.pcell:hover{background:var(--fill)}button.pcell:hover .ic{color:var(--bra
 @media (max-width:420px){.pstats{gap:0}.pcell .pn{font-size:1rem}.pcell .pl{font-size:.7rem}}
 
 .fyrow{margin-top:6px}.fyrow .fy{margin-left:0}
+
+.edt{color:var(--mute);font-size:.82rem;font-style:italic}
+.edt::before{content:'· ';font-style:normal}

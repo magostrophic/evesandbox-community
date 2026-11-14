@@ -223,6 +223,7 @@ export function createStore(fbConfig) {
       return (await call('POST', '/api/posts', f, true)).id;
     },
     async deletePost(id) { await call('DELETE', '/api/posts/' + id); },
+    async editPost(id, title, body) { return call('PATCH', '/api/posts/' + id, { title, body }); },
     async listReplies(postId, { after, size }) {
       const q = new URLSearchParams({ size: String(size || 30) });
       if (after) q.set('cursor', after);

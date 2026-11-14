@@ -142,14 +142,14 @@ async function verifyIdToken(env, token) {
 }
 
 // ---------- row -> JSON ----------
-const postOut = (r) => ({ id: r.id, title: r.title, body: r.body, score: r.score, replyCount: r.reply_count, createdAt: r.created, authorId: r.author_id, authorName: r.aname || 'Deleted User', authorUser: r.auser || '', authorAvatar: r.aav || 0, images: r.img_count });
+const postOut = (r) => ({ id: r.id, title: r.title, body: r.body, score: r.score, replyCount: r.reply_count, createdAt: r.created, authorId: r.author_id, authorName: r.aname || 'Deleted User', authorUser: r.auser || '', authorAvatar: r.aav || 0, images: r.img_count, edited: r.edited || 0 });
 const replyOut = (r) => ({ id: r.id, body: r.body, authorId: r.author_id, authorName: r.aname || 'Deleted User', authorUser: r.auser || '', authorAvatar: r.aav || 0, createdAt: r.created, postId: r.post_id, postTitle: r.ptitle });
 const POST_SQL = 'SELECT p.*, u.name AS aname, u.username AS auser, u.avatar AS aav FROM posts p LEFT JOIN users u ON u.id = p.author_id';
 
 function pageSize(url, def, max) { const n = parseInt(url.searchParams.get('size') || '', 10); return n >= 1 && n <= max ? n : def; }
 
 // ---------- health check (/api/ping): shows whether the site is set up completely. Only "ok / missing / problem", never a value ----------
-const BUILD = '2026-11-14';
+const BUILD = '2026-11-14b';
 async function ping(env, url) {
   const checks = {};
   const probe = async (name, f) => { try { checks[name] = (await f()) ? 'ok' : 'missing'; } catch (e) { console.error('ping ' + name, e && e.message ? e.message : e); checks[name] = 'problem'; } };
@@ -301,6 +301,7 @@ async function api(req, env, url) {
       return r ? json({ post: postOut(r) }) : json({ post: null }, 404);
     }
     if (method === 'DELETE') return deletePost(req, env, m[1]);
+    if (method === 'PATCH') return editPost(req, env, m[1]);
   }
   if ((m = path.match(/^\/api\/posts\/([a-z0-9]{8})\/vote$/)) && method === 'PUT') return vote(req, env, m[1]);
   if ((m = path.match(/^\/api\/posts\/([a-z0-9]{8})\/replies$/))) {
@@ -505,6 +506,22 @@ async function deleteAccount(req, env, url) {
   await env.DB.batch(st);
   for (let i = 0; i < keys.length; i += 1000) { try { await env.IMAGES.delete(keys.slice(i, i + 1000)); } catch (e) { console.error('r2 delete', e); } }
   return json({ ok: true }, 200, { 'set-cookie': cookieHeader(url, '', 0) });
+}
+
+// Only the author can change a post's title and text (pictures stay as they are). A real change marks the post "edited" with the time.
+async function editPost(req, env, id) {
+  const u = await needWriter(env, req);
+  const b = await readJson(req);
+  const title = cleanText(b.title).replace(/\n+/g, ' ').trim(), body = cleanText(b.body).trim();
+  if (!title || title.length > L.title || body.length > L.body) fail(400, 'bad-request');
+  const p = await env.DB.prepare('SELECT id, author_id, title, body FROM posts WHERE id = ?').bind(id).first();
+  if (!p) fail(404, 'not-found');
+  if (p.author_id !== u.id) fail(403, 'forbidden');
+  if (p.title === title && p.body === body) return json({ ok: true, changed: false });
+  const now = Date.now();
+  try { await env.DB.prepare('UPDATE posts SET title = ?, body = ?, edited = ? WHERE id = ?').bind(title, body, now, id).run(); }
+  catch (e) { console.error('edit post', e && e.message ? e.message : e); fail(503, 'edit-not-ready'); }   // the "edited" column was never added: run migration-edit.sql
+  return json({ ok: true, changed: true, edited: now });
 }
 
 async function deletePost(req, env, id) {
